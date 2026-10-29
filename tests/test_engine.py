@@ -345,6 +345,25 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(msgs['Chantier Dupont']['folder_id'], 'DUPONT')
         self.assertEqual(msgs['Autre sujet']['folder_id'], 'INBOX')  # aucun mot-cle valide
 
+    def test_create_project_folder_in_affaires(self):
+        self.box.folders['AFF'] = {'name': 'Affaires', 'parent_id': 'INBOX'}
+        self.store.set('projects', 'p1', {'name': 'Résidence Les Tilleuls', 'keywords': [], 'contacts': []})
+        out = self.engine().create_project_folder('p1')
+        self.assertTrue(out['created'])
+        self.assertEqual(self.box.folders[out['folder_id']], {'name': 'Résidence Les Tilleuls', 'parent_id': 'AFF'})
+        self.assertEqual(self.store.get('projects', 'p1')['folder_id'], out['folder_id'])
+        again = self.engine().create_project_folder('p1')  # pas de doublon
+        self.assertFalse(again['created'])
+        self.assertEqual(again['folder_id'], out['folder_id'])
+
+    def test_create_project_folder_needs_parent(self):
+        self.store.set('projects', 'p1', {'name': 'X'})
+        with self.assertRaises(UserError):
+            self.engine().create_project_folder('p1')
+        self.store.set('settings', 'main', {'project_parent_folder': 'CHANTIERS'})
+        out = self.engine().create_project_folder('p1')
+        self.assertEqual(self.box.folders[out['folder_id']]['parent_id'], 'CHANTIERS')
+
     # -- maintenance -------------------------------------------------------------
     def test_purge_old_messages(self):
         self.box.add(received=NOW - timedelta(hours=1))

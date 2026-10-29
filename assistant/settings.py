@@ -16,7 +16,8 @@ DEFAULTS = {
     'signature': '',
     'writing_style': 'Vouvoiement, ton professionnel et cordial, phrases courtes.',
     'ai_enabled': True,
-    'ai_model': '',                         # vide = OPENROUTER_MODEL (Render)
+    'ai_model': '',
+    'project_parent_folder': '',            # dossier "Affaires" ; vide = detection automatique                         # vide = OPENROUTER_MODEL (Render)
     'ai_on_bulk': False,                    # newsletters / notifications : pas d'IA
     'ai_daily_limit': 45,                   # garde-fou quota OpenRouter gratuit
     'auto_draft': False,                    # brouillons Exchange automatiques

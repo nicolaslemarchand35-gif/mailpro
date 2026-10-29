@@ -24,6 +24,7 @@ Hébergement prévu (gratuit, sans carte bancaire) : **Render Free** (applicatio
 | **À savoir** | Informations sans réponse nécessaire (comptes rendus, confirmations, copies). Archivées après 10 jours (réglable). |
 | **Tâches** | Création manuelle ou proposée par l'IA (à accepter/rejeter) : projet, priorité, échéance et sa source, statut, mails sources. |
 | **Classement** | Propositions de dossier, déplacement en un clic, création de dossier, journal des opérations avec **annulation**. |
+| **Projets** | Dans Réglages : nom, mots-clés, interlocuteurs, dossier cible. Le bouton **Créer le dossier** crée dans Outlook un dossier au nom du projet dans votre dossier « Affaires » (détecté automatiquement ou choisi) et le relie au projet ; un dossier existant du même nom est réutilisé. |
 | **Réglages** | Horaires, dossiers suivis, IA, signature, style, interlocuteurs prioritaires, projets (mots-clés, interlocuteurs, dossier cible), conservation, automatismes. |
 
 Principes métier appliqués :

@@ -703,6 +703,27 @@ async function projectsEditor() {
   const wrap = h('section', { class: 'group' }, h('h3', { class: 'group-title' }, 'Projets'),
     h('p', { class: 'group-header-note' }, 'Mots-clés et interlocuteurs validés servent au rapprochement des mails ; le dossier cible alimente les propositions de classement.'));
   const list = h('div', { class: 'list' });
+  const parentSel = h('select', { 'aria-label': 'Dossier parent des projets' }, h('option', { value: '' }, 'Détection automatique…'));
+  const parentInfo = h('p', { class: 'group-footer' });
+  const fillParent = async () => {
+    try {
+      const data = await api('/api/projects/parent-folder');
+      const auto = data.detected && !data.selected ? `Automatique — ${data.detected.path}` : 'Automatique (dossier « Affaires »)';
+      parentSel.replaceChildren(h('option', { value: '' }, auto),
+        ...state.folders.filter((x) => !x.system).map((x) => h('option', { value: x.id, selected: x.id === data.selected }, x.path)));
+      parentInfo.textContent = data.detected
+        ? `« Créer le dossier » range le nouveau dossier dans : ${data.detected.path}`
+        : 'Aucun dossier « Affaires » trouvé : choisissez le dossier parent ci-dessus.';
+    } catch (_) { /* best-effort */ }
+  };
+  parentSel.addEventListener('change', async () => {
+    const r = await run(parentSel, () => api('/api/settings', { method: 'PUT', body: { project_parent_folder: parentSel.value } }), 'Dossier parent enregistré');
+    if (r) fillParent();
+  });
+  fillParent();
+  wrap.append(h('div', { class: 'group-body', style: 'margin-bottom:.8rem' },
+    h('label', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Dossier parent des projets',
+      h('small', {}, 'Où créer les dossiers de projet dans Outlook')), parentSel)), parentInfo);
   const editor = (p = { name: '', keywords: [], contacts: [], folder_id: null, auto_move: false, active: true }) => {
     const name = h('input', { value: p.name, placeholder: 'Nom du projet (ex. Résidence Les Tilleuls)' });
     const kw = h('input', { value: (p.keywords || []).join(', '), placeholder: 'Mots-clés séparés par des virgules' });
@@ -711,8 +732,23 @@ async function projectsEditor() {
     const auto = h('input', { type: 'checkbox', class: 'switch', checked: p.auto_move });
     const split = (v) => v.split(',').map((x) => x.trim()).filter(Boolean);
     const body = () => ({ name: name.value, keywords: split(kw.value), contacts: split(ct.value), folder_id: folder.value || null, auto_move: auto.checked, active: true });
+    const createFolder = h('button', { type: 'button', class: 'small tinted', onclick: async (e) => {
+      if (!name.value.trim()) return toast('Indiquez d’abord le nom du projet.', true);
+      const btn = e.currentTarget;
+      const r = await run(btn, async () => {
+        const saved = p.id ? await api(`/api/projects/${p.id}`, { method: 'PUT', body: body() })
+          : await api('/api/projects', { method: 'POST', body: body() });
+        return api(`/api/projects/${saved.id}/folder`, { method: 'POST' });
+      });
+      if (r) {
+        toast(r.created ? `Dossier créé dans Outlook : ${r.path}` : `Dossier existant associé : ${r.path}`);
+        await Promise.all([loadFolders(), loadProjects()]);
+        render();
+      }
+    } }, 'Créer le dossier');
     return h('div', { class: 'card' },
-      h('div', { class: 'grid2' }, h('label', {}, 'Nom', name), h('label', {}, 'Dossier cible', folder)),
+      h('div', { class: 'grid2' }, h('label', {}, 'Nom', name),
+        h('label', {}, 'Dossier cible', h('div', { class: 'inline' }, folder, createFolder))),
       h('label', {}, 'Mots-clés', kw), h('label', {}, 'Interlocuteurs', ct),
       h('label', { class: 'field toggle' }, h('span', { class: 'field-label' }, 'Déplacement automatique',
         h('small', {}, 'Si l’automatisme est activé dans les réglages')), auto),

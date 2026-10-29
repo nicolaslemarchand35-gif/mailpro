@@ -596,6 +596,20 @@ def create_app(engine_factory=None, firebase_verifier=None):
         s.set('projects', pid, data, merge=True)
         return ok({'id': pid, **current, **data})
 
+    @app.post('/api/projects/<pid>/folder')
+    @require_user
+    def project_folder(pid):
+        with WRITE_LOCK:
+            return ok(make_engine().create_project_folder(pid))
+
+    @app.get('/api/projects/parent-folder')
+    @require_user
+    def project_parent_folder():
+        eng = make_engine()
+        parent = eng.project_parent()
+        return ok({'selected': eng.settings()['project_parent_folder'],
+                   'detected': {'id': parent['id'], 'path': parent.get('path')} if parent else None})
+
     @app.delete('/api/projects/<pid>')
     @require_user
     def delete_project(pid):
