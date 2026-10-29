@@ -123,7 +123,7 @@ class OpenRouterTests(unittest.TestCase):
         def fake_post(url, json=None, headers=None, timeout=None, allow_redirects=None):
             sent.update(json=json, headers=headers, url=url, allow_redirects=allow_redirects)
             return Resp(200, {'model': 'm:free', 'choices': [{'message': {'content': '{"categorie": "a_savoir", "resume": "x"}'}}]})
-        with patch.dict(os.environ, {'OPENROUTER_API_KEY': 'k', 'OPENROUTER_MODEL': 'a:free, b:free', 'OPENROUTER_NO_TRAINING': 'true'}), \
+        with patch.dict(os.environ, {'API_OPENROUTER': 'k', 'OPENROUTER_MODEL': 'a:free, b:free', 'OPENROUTER_NO_TRAINING': 'true'}), \
                 patch('requests.post', fake_post):
             out = ai.analyze_with_ai(ITEM, ctx(), timeout=10)
         self.assertEqual(out['categorie'], 'a_savoir')

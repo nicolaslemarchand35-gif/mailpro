@@ -59,6 +59,11 @@ def firebase_web_config():
     return {k: data[k] for k in keep if k in data} or None
 
 
+def openrouter_key():
+    """Cle OpenRouter : API_OPENROUTER (nom retenu sur Render), OPENROUTER_API_KEY accepte."""
+    return env('API_OPENROUTER') or env('OPENROUTER_API_KEY')
+
+
 def openrouter_models():
     raw = env('OPENROUTER_MODEL', 'nvidia/nemotron-3.5-lightning:free,openrouter/free')
     return [m.strip() for m in raw.split(',') if m.strip()]

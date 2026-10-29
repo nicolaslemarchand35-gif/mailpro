@@ -1,6 +1,6 @@
 """Compare des modeles OpenRouter sur les mails FICTIFS du mode demo (aucune donnee reelle).
 
-    OPENROUTER_API_KEY=... python -m scripts.eval_models google/gemma-4-31b-it:free openrouter/free
+    API_OPENROUTER=... python -m scripts.eval_models google/gemma-4-31b-it:free openrouter/free
 """
 import os
 import sys

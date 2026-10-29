@@ -123,7 +123,7 @@ des virgules = ordre de repli).
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | **tout le contenu** du fichier JSON de l'étape 2.6 |
 | `FIREBASE_WEB_CONFIG` | le JSON de l'étape 2.5 |
 | `ALLOWED_UIDS` | l'UID de l'étape 2.4 |
-| `OPENROUTER_API_KEY` | la clé de l'étape 3.1 |
+| `API_OPENROUTER` | la clé de l'étape 3.1 |
 | `FIRESTORE_ENABLED` | `false` pour le tout premier test, puis `true` |
 
 3. Déployez. Vérifiez <https://VOTRE-SERVICE.onrender.com/healthz> → `{"status":"up"}`.
@@ -186,7 +186,7 @@ suivant traite normalement. Fiez-vous à la « dernière synchro réussie » aff
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | oui | Identité serveur (Firestore + vérification des connexions) |
 | `FIREBASE_WEB_CONFIG` | oui | `apiKey`, `authDomain`, `projectId` (publics) |
 | `ALLOWED_UIDS` | oui | UID(s) Firebase autorisés, séparés par des virgules ; le premier est le propriétaire des données |
-| `OPENROUTER_API_KEY` | pour l'IA | Sans clé : analyse par règles uniquement |
+| `API_OPENROUTER` | pour l'IA | Sans clé : analyse par règles uniquement |
 | `OPENROUTER_MODEL` | non | Modèles par ordre de préférence (défaut ci-dessus) |
 | `OPENROUTER_NO_TRAINING` | non | `true` : exclut les fournisseurs qui conservent/entraînent |
 | `OPENROUTER_REASONING` | non | `off` (défaut, plus rapide) ; un modèle qui l'impose est relancé en raisonnement minimal |
@@ -204,7 +204,7 @@ uv venv -p 3.12 .venv && uv pip install -p .venv/bin/python --require-hashes -r 
 .venv/bin/python -m unittest discover -s tests -t .
 ```
 
-Mode démo (boîte simulée, mails fictifs, aucune connexion OVH ; vraie IA si `OPENROUTER_API_KEY` est défini) :
+Mode démo (boîte simulée, mails fictifs, aucune connexion OVH ; vraie IA si `API_OPENROUTER` est défini) :
 
 ```bash
 ADMIN_API_TOKEN=$(python3 -c "import secrets;print(secrets.token_urlsafe(32))") .venv/bin/python -m scripts.demo

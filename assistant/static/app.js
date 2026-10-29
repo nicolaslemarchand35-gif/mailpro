@@ -619,7 +619,7 @@ async function renderSettings() {
       h('dt', {}, 'Dernière erreur'), h('dd', {}, st.last_error ? `${st.last_error} (${fmtDate(st.last_error_at)})` : 'aucune'),
       h('dt', {}, 'Dossiers initialisés'), h('dd', {}, String(st.folders_initialized?.length || 0)),
       h('dt', {}, 'Travail restant'), h('dd', {}, st.backlog ? 'oui (repris au prochain passage)' : 'non'),
-      h('dt', {}, 'Modèle IA'), h('dd', {}, st.ai?.configured ? (st.ai.models || []).join(', ') : 'non configuré (OPENROUTER_API_KEY)'),
+      h('dt', {}, 'Modèle IA'), h('dd', {}, st.ai?.configured ? (st.ai.models || []).join(', ') : 'non configuré (API_OPENROUTER)'),
       h('dt', {}, 'Appels IA aujourd’hui'), h('dd', {}, st.ai ? `${st.ai.used_today} / ${st.ai.daily_limit}` : '—')));
 
   main.replaceChildren(h('div', { class: 'toolbar' }, h('h2', {}, 'Réglages')), statusCard,

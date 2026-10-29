@@ -26,7 +26,7 @@ services:
         sync: false
       - key: ALLOWED_UIDS
         sync: false
-      - key: OPENROUTER_API_KEY
+      - key: API_OPENROUTER
         sync: false
       - key: OPENROUTER_MODEL
         value: nvidia/nemotron-3.5-lightning:free,openrouter/free

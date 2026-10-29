@@ -516,7 +516,7 @@ class Engine:
             raise UserError('Message introuvable.')
         cfg = self.settings()
         if not (cfg['ai_enabled'] and ai.ai_configured()):
-            raise UserError("L'IA n'est pas configurée (OPENROUTER_API_KEY) ou est désactivée.")
+            raise UserError("L'IA n'est pas configurée (API_OPENROUTER) ou est désactivée.")
         if self.ai_budget_left(cfg) <= 0:
             raise UserError('Quota IA du jour atteint ou fournisseur saturé : réessayez plus tard.')
         self._deadline = time.monotonic() + 40

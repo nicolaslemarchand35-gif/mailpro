@@ -216,7 +216,7 @@ def build_messages(item, ctx):
 
 def call_openrouter(messages, timeout):
     import requests
-    key = config.env('OPENROUTER_API_KEY')
+    key = config.openrouter_key()
     if not key:
         raise AiError('NoApiKey')
     models = config.openrouter_models()
@@ -381,4 +381,4 @@ def analyze_with_ai(item, ctx, timeout=20):
 
 
 def ai_configured():
-    return bool(config.env('OPENROUTER_API_KEY'))
+    return bool(config.openrouter_key())

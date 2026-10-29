@@ -1,6 +1,6 @@
 """Mode demonstration local : boite Exchange SIMULEE + mails fictifs.
 
-Aucune connexion a OVH. Si OPENROUTER_API_KEY est defini, les mails fictifs sont
+Aucune connexion a OVH. Si API_OPENROUTER est defini, les mails fictifs sont
 analyses par le vrai modele (utile pour evaluer un modele gratuit sans donnees reelles).
 
     ADMIN_API_TOKEN=$(python -c "import secrets;print(secrets.token_urlsafe(32))") \
