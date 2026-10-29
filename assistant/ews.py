@@ -201,6 +201,9 @@ class EwsClient:
         self._session = session
         self._negotiated = session is not None
         self.auth_scheme = None
+        # Informations de diagnostic sans secret ni contenu (codes HTTP, schemas proposes).
+        self.trace = {'stage': 'init'}
+        self._offered = ''
 
     # -- transport -------------------------------------------------------
     def _ensure_session(self):
@@ -213,8 +216,13 @@ class EwsClient:
         from requests_ntlm import HttpNtlmAuth
         session = requests.Session()
         session.trust_env = False
+        self.trace['stage'] = 'challenge'
         challenge = session.get(self.endpoint, timeout=(5, 12), allow_redirects=False)
-        offered = challenge.headers.get('WWW-Authenticate', '').upper()
+        offered = ', '.join(challenge.headers.get('WWW-Authenticate', '').upper().split(',')) \
+            if challenge.headers.get('WWW-Authenticate') else ''
+        self._offered = offered
+        self.trace['challenge_status'] = challenge.status_code
+        self.trace['schemes_offered'] = sorted({w.strip().split(' ')[0] for w in offered.split(',') if w.strip()})
         if challenge.status_code != 401:
             session.close()
             raise EwsError('UnexpectedChallenge', 'Unexpected authentication challenge')
@@ -227,9 +235,20 @@ class EwsClient:
         else:
             session.close()
             raise EwsError('UnsupportedAuth', 'Unsupported authentication')
+        self.trace['auth'] = self.auth_scheme
         self._session = session
         self._negotiated = True
         return session
+
+    def _fallback_to_basic(self):
+        """NTLM refuse alors que Basic est propose : un seul essai en Basic (HTTPS)."""
+        from requests.auth import HTTPBasicAuth
+        if self.auth_scheme == 'NTLM' and 'BASIC' in self._offered:
+            self._session.auth = HTTPBasicAuth(self.username, self.password)
+            self.auth_scheme = 'Basic'
+            self.trace['auth'] = 'Basic (repli apres refus NTLM)'
+            return True
+        return False
 
     def close(self):
         if self._session is not None:
@@ -252,9 +271,16 @@ class EwsClient:
             raise EwsError('Forbidden', 'Sending is never allowed')
         from defusedxml.ElementTree import fromstring
         session = self._ensure_session()
-        response = session.post(self.endpoint, data=envelope(body), headers={
-            'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': f'{M}/{operation}',
-        }, timeout=(5, 20), allow_redirects=False)
+        self.trace['stage'] = operation
+
+        def send():
+            return session.post(self.endpoint, data=envelope(body), headers={
+                'Content-Type': 'text/xml; charset=utf-8', 'SOAPAction': f'{M}/{operation}',
+            }, timeout=(5, 20), allow_redirects=False)
+        response = send()
+        if response.status_code == 401 and self._fallback_to_basic():
+            response = send()
+        self.trace['last_http'] = response.status_code
         if response.status_code == 401:
             raise EwsError('Unauthorized', 'Authentication refused')
         if response.status_code not in (200, 500):
@@ -478,9 +504,15 @@ def stable_hash(*parts):
     return hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]
 
 
-def probe_mailbox():
-    """Diagnostic historique du prototype : lecture seule, compteurs uniquement."""
+def probe_mailbox(trace=None):
+    """Diagnostic historique du prototype : lecture seule, compteurs uniquement.
+
+    `trace` (dict) recoit l'etape atteinte et des informations sans secret, meme en cas d'echec.
+    """
     with EwsClient() as client:
+        if trace is not None:
+            client.trace = trace
+            trace['stage'] = 'init'
         ids = client.distinguished_ids()
         if 'inbox' not in ids:
             raise EwsError('InboxNotConfirmed')

@@ -90,6 +90,15 @@ class AuthNegotiationTests(unittest.TestCase):
         self.assertFalse(session.trust_env)
         self.assertFalse(session.get_kwargs['allow_redirects'])
 
+    def test_trace_and_basic_fallback_after_ntlm_refused(self):
+        client, session = self.negotiate(FakeResponse(401, headers={'WWW-Authenticate': 'NTLM, Basic realm="x"'}))
+        self.assertEqual(client.trace['schemes_offered'], ['BASIC', 'NTLM'])
+        self.assertEqual(client.trace['challenge_status'], 401)
+        session.responses = [FakeResponse(401), FakeResponse(200, response('GetFolder', ''))]
+        client.post('GetFolder', '<m:GetFolder/>')
+        self.assertEqual(client.auth_scheme, 'Basic')
+        self.assertNotIn('pw', repr(client.trace))
+
     def test_basic_fallback(self):
         client, _ = self.negotiate(FakeResponse(401, headers={'WWW-Authenticate': 'Basic realm="x"'}))
         self.assertEqual(client.auth_scheme, 'Basic')

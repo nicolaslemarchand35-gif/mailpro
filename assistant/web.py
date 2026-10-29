@@ -148,8 +148,9 @@ def create_app(engine_factory=None, firebase_verifier=None):
     def diagnostic():
         if not DIAG_LOCK.acquire(blocking=False):
             return ok({'status': 'busy'}, 409)
+        trace = {}
         try:
-            counts = probe_mailbox()
+            counts = probe_mailbox(trace)
             result = {'status': 'ok', 'checked_at': utcnow(), **counts}
             try:
                 base = get_base_store()
@@ -160,10 +161,11 @@ def create_app(engine_factory=None, firebase_verifier=None):
                 result['store_selftest'] = 'error:' + type(exc).__name__
             return ok(result)
         except EwsError as exc:
-            return ok({'status': 'error', 'type': exc.code,
+            return ok({'status': 'error', 'type': exc.code, 'trace': trace,
                        'note': 'Diagnostic incomplet ; aucune écriture Exchange.'}, 503)
         except Exception as exc:
-            return ok({'status': 'error', 'type': type(exc).__name__,
+            # Ex. ConnectionError / SSLError / ConnectTimeout : OVH injoignable depuis Render.
+            return ok({'status': 'error', 'type': type(exc).__name__, 'trace': trace,
                        'note': 'Diagnostic incomplet ; aucune écriture Exchange.'}, 503)
         finally:
             DIAG_LOCK.release()

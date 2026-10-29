@@ -104,6 +104,7 @@ class WebTests(unittest.TestCase):
             r = self.send('POST', '/api/diagnostic', token=ADMIN)
         self.assertEqual(r.status_code, 503)
         self.assertNotIn(b'PASSWORD-SECRET', r.data)
+        self.assertIn('trace', r.json)
 
     def test_diagnostic_success_persisted(self):
         with patch('assistant.web.probe_mailbox', return_value={'items_checked': 5, 'bodies_available': 5}):
