@@ -210,6 +210,9 @@ class EwsClient:
         if self._negotiated:
             return self._session
         if not self.username or not self.password:
+            # Nom de la variable manquante uniquement (jamais sa valeur).
+            missing = [n for n, v in (('OVH_EMAIL', self.username), ('OVH_PASSWORD', self.password)) if not v]
+            self.trace['missing'] = missing
             raise EwsError('ConfigError', 'Missing mailbox credentials')
         import requests
         from requests.auth import HTTPBasicAuth
