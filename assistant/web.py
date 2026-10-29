@@ -564,6 +564,10 @@ def create_app(engine_factory=None, firebase_verifier=None):
         out['active'] = data.get('active', True) is not False
         return out, errors
 
+    def duplicate_project(name, exclude=None):
+        key = ai_mod.normalize(name)
+        return any(pid != exclude and ai_mod.normalize(p.get('name')) == key for pid, p in store().query('projects'))
+
     @app.get('/api/projects')
     @require_user
     def list_projects():
@@ -577,6 +581,8 @@ def create_app(engine_factory=None, firebase_verifier=None):
         data, errors = clean_project(json_body())
         if errors:
             return fail(400, 'invalid', ' '.join(errors))
+        if duplicate_project(data['name']):
+            return fail(400, 'invalid', 'Un projet porte déjà ce nom.')
         data['created_at'] = utcnow()
         pid = 'p' + stable_hash(data['name'].lower(), str(utcnow().timestamp()))[:10]
         store().set('projects', pid, data)
@@ -592,6 +598,8 @@ def create_app(engine_factory=None, firebase_verifier=None):
         data, errors = clean_project(json_body())
         if errors:
             return fail(400, 'invalid', ' '.join(errors))
+        if duplicate_project(data['name'], exclude=pid):
+            return fail(400, 'invalid', 'Un projet porte déjà ce nom.')
         data['updated_at'] = utcnow()
         s.set('projects', pid, data, merge=True)
         return ok({'id': pid, **current, **data})

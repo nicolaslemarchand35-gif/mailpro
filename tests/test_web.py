@@ -171,6 +171,9 @@ class WebTests(unittest.TestCase):
         r = self.send('POST', '/api/projects', {'name': 'Dupont', 'keywords': ['dupont'], 'contacts': ['@plombier.fr']})
         self.assertEqual(r.status_code, 201)
         self.assertEqual(self.send('POST', '/api/projects', {'name': 'X', 'folder_id': 'inconnu'}).status_code, 400)
+        self.assertEqual(self.send('POST', '/api/projects', {'name': ' dupont '}).status_code, 400)  # doublon
+        pid = r.json['id']
+        self.assertEqual(self.send('PUT', f'/api/projects/{pid}', {'name': 'Dupont', 'keywords': ['x']}).status_code, 200)
         r = self.send('PUT', '/api/settings', {'work_start': '07:30', 'work_days': [0, 1, 2, 3, 4, 5]})
         self.assertEqual(r.json['work_start'], '07:30')
         self.assertEqual(self.send('PUT', '/api/settings', {'work_end': '07:00'}).status_code, 400)

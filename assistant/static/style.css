@@ -205,6 +205,10 @@ table { width: 100%; border-collapse: collapse; font-size: .88rem; }
 th { text-align: left; font-weight: 600; color: var(--text-2); font-size: .78rem; text-transform: uppercase; letter-spacing: .02em; }
 th, td { padding: .6rem .8rem; border-bottom: 1px solid var(--separator); vertical-align: top; overflow-wrap: anywhere; }
 tr:last-child td { border-bottom: none; }
+td.strong { font-weight: 600; overflow-wrap: normal; word-break: normal; hyphens: auto; min-width: 7rem; }
+td.right { text-align: right; width: 1%; white-space: nowrap; }
+table.projects td { vertical-align: middle; }
+.actions.spread { justify-content: space-between; align-items: center; }
 .tree { font-size: .92rem; max-height: 22rem; overflow: auto; background: var(--surface); border-radius: var(--radius);
   box-shadow: var(--shadow); padding: .6rem 1rem; }
 .tree div { padding: .3rem 0; overflow-wrap: anywhere; border-bottom: 1px solid var(--separator); }
@@ -301,6 +305,8 @@ label .inline > select { flex: 1; }
   .card.mail { gap: .7rem; }
   .avatar { width: 34px; height: 34px; flex-basis: 34px; font-size: .8rem; }
   .actions button { flex: 1 1 auto; }
+  .actions.spread button { flex: 0 0 auto; }
+  .hide-sm { display: none; }
   .drawer { align-items: flex-end; }
   .drawer-panel { height: 94%; border-radius: 14px 14px 0 0; overflow: hidden; animation-name: sheet; }
   .field > input:not(.switch), .field > select { max-width: 55%; }

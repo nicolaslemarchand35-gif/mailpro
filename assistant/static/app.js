@@ -702,7 +702,6 @@ async function modelPicker(s) {
 async function projectsEditor() {
   const wrap = h('section', { class: 'group' }, h('h3', { class: 'group-title' }, 'Projets'),
     h('p', { class: 'group-header-note' }, 'Mots-clés et interlocuteurs validés servent au rapprochement des mails ; le dossier cible alimente les propositions de classement.'));
-  const list = h('div', { class: 'list' });
   const parentSel = h('select', { 'aria-label': 'Dossier parent des projets' }, h('option', { value: '' }, 'Détection automatique…'));
   const parentInfo = h('p', { class: 'group-footer' });
   const fillParent = async () => {
@@ -713,7 +712,8 @@ async function projectsEditor() {
         ...state.folders.filter((x) => !x.system).map((x) => h('option', { value: x.id, selected: x.id === data.selected }, x.path)));
       parentInfo.textContent = data.detected
         ? `« Créer le dossier » range le nouveau dossier dans : ${data.detected.path}`
-        : 'Aucun dossier « Affaires » trouvé : choisissez le dossier parent ci-dessus.';
+        : 'Aucun dossier « Affaires » trouvé : choisissez ci-dessus le dossier où créer les dossiers de projet.';
+      parentInfo.classList.toggle('error', !data.detected);
     } catch (_) { /* best-effort */ }
   };
   parentSel.addEventListener('change', async () => {
@@ -721,52 +721,87 @@ async function projectsEditor() {
     if (r) fillParent();
   });
   fillParent();
-  wrap.append(h('div', { class: 'group-body', style: 'margin-bottom:.8rem' },
+
+  const rows = state.projects.map((p) => h('tr', {},
+    h('td', { class: 'strong' }, p.name, p.auto_move ? h('span', { class: 'badge ok', style: 'margin-left:.4rem' }, 'auto') : null),
+    h('td', {}, folderPath(p.folder_id) || h('span', { class: 'muted' }, 'Aucun dossier')),
+    h('td', { class: 'hide-sm' }, (p.keywords || []).join(', ') || h('span', { class: 'muted' }, '—')),
+    h('td', { class: 'hide-sm' }, (p.contacts || []).join(', ') || h('span', { class: 'muted' }, '—')),
+    h('td', { class: 'right' }, h('button', { class: 'small tinted', onclick: () => openProjectEditor(p) }, 'Modifier'))));
+  const table = state.projects.length
+    ? h('div', { class: 'table-wrap' }, h('table', { class: 'projects' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Projet'), h('th', {}, 'Dossier cible'), h('th', { class: 'hide-sm' }, 'Mots-clés'),
+        h('th', { class: 'hide-sm' }, 'Interlocuteurs'), h('th', {}, ''))),
+      h('tbody', {}, ...rows)))
+    : h('div', { class: 'empty' }, 'Aucun projet pour l’instant.');
+
+  wrap.append(h('div', { class: 'group-body', style: 'margin-bottom:.4rem' },
     h('label', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Dossier parent des projets',
-      h('small', {}, 'Où créer les dossiers de projet dans Outlook')), parentSel)), parentInfo);
-  const editor = (p = { name: '', keywords: [], contacts: [], folder_id: null, auto_move: false, active: true }) => {
-    const name = h('input', { value: p.name, placeholder: 'Nom du projet (ex. Résidence Les Tilleuls)' });
-    const kw = h('input', { value: (p.keywords || []).join(', '), placeholder: 'Mots-clés séparés par des virgules' });
-    const ct = h('input', { value: (p.contacts || []).join(', '), placeholder: 'Interlocuteurs : adresses ou @domaine.fr' });
-    const folder = folderSelect(p.folder_id, { includeInbox: false, placeholder: 'Aucun dossier cible' });
-    const auto = h('input', { type: 'checkbox', class: 'switch', checked: p.auto_move });
-    const split = (v) => v.split(',').map((x) => x.trim()).filter(Boolean);
-    const body = () => ({ name: name.value, keywords: split(kw.value), contacts: split(ct.value), folder_id: folder.value || null, auto_move: auto.checked, active: true });
-    const createFolder = h('button', { type: 'button', class: 'small tinted', onclick: async (e) => {
-      if (!name.value.trim()) return toast('Indiquez d’abord le nom du projet.', true);
-      const btn = e.currentTarget;
-      const r = await run(btn, async () => {
-        const saved = p.id ? await api(`/api/projects/${p.id}`, { method: 'PUT', body: body() })
-          : await api('/api/projects', { method: 'POST', body: body() });
-        return api(`/api/projects/${saved.id}/folder`, { method: 'POST' });
-      });
-      if (r) {
-        toast(r.created ? `Dossier créé dans Outlook : ${r.path}` : `Dossier existant associé : ${r.path}`);
-        await Promise.all([loadFolders(), loadProjects()]);
-        render();
-      }
-    } }, 'Créer le dossier');
-    return h('div', { class: 'card' },
-      h('div', { class: 'grid2' }, h('label', {}, 'Nom', name),
-        h('label', {}, 'Dossier cible', h('div', { class: 'inline' }, folder, createFolder))),
-      h('label', {}, 'Mots-clés', kw), h('label', {}, 'Interlocuteurs', ct),
-      h('label', { class: 'field toggle' }, h('span', { class: 'field-label' }, 'Déplacement automatique',
-        h('small', {}, 'Si l’automatisme est activé dans les réglages')), auto),
-      h('div', { class: 'actions' },
-        h('button', { class: 'primary small', onclick: async (e) => {
-          const r = await run(e.currentTarget, () => (p.id ? api(`/api/projects/${p.id}`, { method: 'PUT', body: body() }) : api('/api/projects', { method: 'POST', body: body() })), 'Projet enregistré');
-          if (r) { await loadProjects(); render(); }
-        } }, 'Enregistrer'),
-        p.id ? h('button', { class: 'small danger', onclick: async (e) => {
-          if (!confirm(`Supprimer le projet « ${p.name} » ? Les tâches sont conservées.`)) return;
-          await run(e.currentTarget, () => api(`/api/projects/${p.id}`, { method: 'DELETE' }), 'Projet supprimé');
-          await loadProjects(); render();
-        } }, 'Supprimer') : null));
-  };
-  for (const p of state.projects) list.append(editor(p));
-  if (!state.projects.length) list.append(h('div', { class: 'empty' }, 'Aucun projet pour l’instant.'));
-  wrap.append(list, h('div', { class: 'actions' }, h('button', { class: 'tinted', onclick: () => { list.querySelector('.empty')?.remove(); list.append(editor()); } }, '+ Ajouter un projet')));
+      h('small', {}, 'Où créer les dossiers de projet dans Outlook')), parentSel)), parentInfo,
+  h('div', { style: 'margin-top:1rem' }, table),
+  h('div', { class: 'actions' }, h('button', { class: 'tinted', onclick: () => openProjectEditor() }, '+ Ajouter un projet')));
   return wrap;
+}
+
+function openProjectEditor(p = { name: '', keywords: [], contacts: [], folder_id: null, auto_move: false, active: true }) {
+  const name = h('input', { value: p.name, placeholder: 'ex. Résidence Les Tilleuls' });
+  const kw = h('input', { value: (p.keywords || []).join(', '), placeholder: 'Séparés par des virgules' });
+  const ct = h('input', { value: (p.contacts || []).join(', '), placeholder: 'Adresses ou @domaine.fr' });
+  const folder = folderSelect(p.folder_id, { includeInbox: false, placeholder: 'Aucun dossier cible' });
+  const auto = h('input', { type: 'checkbox', class: 'switch', checked: p.auto_move });
+  const split = (v) => v.split(',').map((x) => x.trim()).filter(Boolean);
+  const body = () => ({ name: name.value, keywords: split(kw.value), contacts: split(ct.value), folder_id: folder.value || null, auto_move: auto.checked, active: true });
+  const save = () => (p.id ? api(`/api/projects/${p.id}`, { method: 'PUT', body: body() }) : api('/api/projects', { method: 'POST', body: body() }));
+  const done = async (msg) => {
+    if (msg) toast(msg);
+    await Promise.all([loadFolders(), loadProjects()]);
+    closeDrawer();
+    render();
+  };
+  const createFolder = h('button', { type: 'button', class: 'small tinted', onclick: async (e) => {
+    if (!name.value.trim()) return toast('Indiquez d’abord le nom du projet.', true);
+    const r = await run(e.currentTarget, async () => {
+      const saved = await save();
+      p = saved;
+      return api(`/api/projects/${saved.id}/folder`, { method: 'POST' });
+    });
+    if (r) {
+      await Promise.all([loadFolders(), loadProjects()]);
+      openProjectEditor(state.projects.find((x) => x.id === p.id) || p);
+      toast(r.created ? `Dossier créé dans Outlook : ${r.path}` : `Dossier existant associé : ${r.path}`);
+      render();
+    }
+  } }, 'Créer le dossier');
+  const form = h('form', { class: 'settings' },
+    h('section', { class: 'group' }, h('div', { class: 'group-body' },
+      h('label', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Nom du projet'), name),
+      h('div', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Dossier cible',
+        h('small', {}, '« Créer le dossier » le crée dans votre dossier Affaires, au nom du projet')),
+      h('div', { class: 'inline' }, folder, createFolder)))),
+    h('section', { class: 'group' }, h('h3', { class: 'group-title' }, 'Rapprochement des mails'), h('div', { class: 'group-body' },
+      h('label', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Mots-clés',
+        h('small', {}, 'Nom de chantier, n° d’affaire, adresse… évitez « devis » ou « chantier »')), kw),
+      h('label', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Interlocuteurs'), ct),
+      h('label', { class: 'field toggle' }, h('span', { class: 'field-label' }, 'Déplacement automatique',
+        h('small', {}, 'Si l’automatisme est activé dans les réglages')), auto))),
+    h('div', { class: 'actions spread' },
+      p.id ? h('button', { type: 'button', class: 'danger', onclick: async (e) => {
+        if (!confirm(`Supprimer le projet « ${p.name} » ? Les tâches et le dossier Outlook sont conservés.`)) return;
+        const r = await run(e.currentTarget, () => api(`/api/projects/${p.id}`, { method: 'DELETE' }));
+        if (r) done('Projet supprimé');
+      } }, 'Supprimer') : h('span'),
+      h('span', { class: 'inline' },
+        h('button', { type: 'button', onclick: closeDrawer }, 'Annuler'),
+        h('button', { type: 'submit', class: 'primary' }, 'Enregistrer'))));
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const r = await run(form.querySelector('button[type=submit]'), save);
+    if (r) done('Projet enregistré');
+  });
+  $('#drawer-title').textContent = p.id ? p.name : 'Nouveau projet';
+  $('#drawer-body').replaceChildren(form);
+  $('#drawer').hidden = false;
+  if (!p.id) name.focus();
 }
 
 // ---------------------------------------------------------------- navigation

@@ -356,6 +356,16 @@ class EngineTests(unittest.TestCase):
         self.assertFalse(again['created'])
         self.assertEqual(again['folder_id'], out['folder_id'])
 
+    def test_project_parent_detection_variants(self):
+        self.box.folders['A1'] = {'name': 'Affaires en cours', 'parent_id': 'ROOT'}
+        self.box.folders['A2'] = {'name': 'Archives', 'parent_id': 'ROOT'}
+        eng = self.engine()
+        meta = eng.refresh_folders(force=True)
+        self.assertEqual(eng.project_parent(meta=meta)['id'], 'A1')
+        self.box.folders['A3'] = {'name': 'AFFAIRES', 'parent_id': 'INBOX'}
+        meta = eng.refresh_folders(force=True)
+        self.assertEqual(eng.project_parent(meta=meta)['id'], 'A3')  # nom exact prioritaire
+
     def test_create_project_folder_needs_parent(self):
         self.store.set('projects', 'p1', {'name': 'X'})
         with self.assertRaises(UserError):

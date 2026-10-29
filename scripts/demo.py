@@ -47,7 +47,7 @@ SAMPLES = [
 
 def build():
     box = FakeMailbox()
-    box.folders['AFFAIRES'] = {'name': 'Affaires', 'parent_id': 'INBOX'}
+    box.folders['AFFAIRES'] = {'name': '01 - Affaires', 'parent_id': 'INBOX'}
     box.folders['TILLEULS'] = {'name': 'Résidence Les Tilleuls', 'parent_id': 'CHANTIERS'}
     box.folders['FERRY'] = {'name': 'Ecole Jules Ferry', 'parent_id': 'CHANTIERS'}
     for subject, sender, body, hours in SAMPLES:

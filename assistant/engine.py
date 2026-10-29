@@ -8,6 +8,7 @@ Fiabilite :
   passage suivant, rien n'est perdu si le processus est arrete ;
 - aucune operation d'envoi ; deplacements et brouillons journalises (`audit`).
 """
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 import time
@@ -744,9 +745,11 @@ class Engine:
         chosen = cfg.get('project_parent_folder')
         if chosen:
             return next((f for f in folders if f['id'] == chosen), None)
-        candidates = [f for f in folders if ai.normalize(f['name']) in ('affaire', 'affaires')]
-        # Le moins profond d'abord (ex. « Boite de reception / Affaires »).
-        candidates.sort(key=lambda f: f.get('path', '').count(' / '))
+        # « Affaires », « AFFAIRES », « 01 - Affaires », « Affaires en cours »...
+        candidates = [f for f in folders if re.search(r'(?<![a-z])affaires?(?![a-z])', ai.normalize(f['name']))]
+        # Nom exact d'abord, puis le moins profond (ex. « Boite de reception / Affaires »).
+        candidates.sort(key=lambda f: (ai.normalize(f['name']) not in ('affaire', 'affaires'),
+                                       f.get('path', '').count(' / '), len(f['name'])))
         return candidates[0] if candidates else None
 
     def create_project_folder(self, project_id):
@@ -761,8 +764,8 @@ class Engine:
             meta = self.refresh_folders(force=True)
             parent = self.project_parent(meta=meta)
             if not parent:
-                raise UserError('Dossier « Affaires » introuvable : choisissez le dossier parent des projets '
-                                'dans Réglages → Projets.')
+                raise UserError('Aucun dossier dont le nom contient « Affaires » n’a été trouvé : choisissez '
+                                'le dossier parent dans Réglages → Projets → « Dossier parent des projets ».')
             existing = next((f for f in meta['folders'] if f.get('parent_id') == parent['id'] and
                              ai.normalize(f['name']) == ai.normalize(name)), None)
             if existing:
