@@ -177,6 +177,17 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.send('PUT', '/api/settings', {'unknown': 1}).status_code, 400)
         self.assertEqual(self.send('PUT', '/api/settings', {'ai_enabled': 'yes'}).status_code, 400)
 
+    def test_ai_model_setting_and_endpoints(self):
+        r = self.send('PUT', '/api/settings', {'ai_model': 'vendor/model:free'})
+        self.assertEqual(r.json['ai_model'], 'vendor/model:free')
+        self.assertEqual(self.send('PUT', '/api/settings', {'ai_model': 'bad model!'}).status_code, 400)
+        with patch('assistant.ai.list_free_models', return_value=[{'id': 'other:free', 'name': 'O', 'context_length': 1}]):
+            r = self.get('/api/ai/models')
+        self.assertFalse(r.json['selected_available'])
+        with patch('assistant.ai.test_model', return_value={'ok': True, 'model': 'x', 'seconds': 1.0, 'sample': 's'}):
+            self.assertTrue(self.send('POST', '/api/ai/test', {'model': 'x:free'}).json['ok'])
+        self.assertEqual(self.send('POST', '/api/ai/test', {'model': ''}).status_code, 400)
+
     def test_static_files(self):
         self.assertEqual(self.client.get('/').status_code, 200)
         self.assertEqual(self.client.get('/static/app.js').status_code, 200)

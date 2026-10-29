@@ -183,6 +183,16 @@ function ago(iso) {
   if (min < 1440) return `il y a ${Math.round(min / 60)} h`;
   return fmtDate(iso);
 }
+const AVATAR_COLORS = ['#ff9f0a', '#30b0c7', '#5e5ce6', '#34c759', '#ff375f', '#0a84ff', '#bf5af2', '#ac8e68'];
+function avatar(name) {
+  const words = String(name || '?').replace(/[<>@._-]+/g, ' ').trim().split(/\s+/);
+  const initials = ((words[0] || '?')[0] + (words[1] ? words[1][0] : '')).toUpperCase();
+  let hash = 0;
+  for (const c of String(name)) hash = (hash * 31 + c.charCodeAt(0)) >>> 0;
+  const el = h('div', { class: 'avatar', 'aria-hidden': 'true' }, initials);
+  el.style.background = AVATAR_COLORS[hash % AVATAR_COLORS.length];
+  return el;
+}
 const projectName = (id) => state.projects.find((p) => p.id === id)?.name;
 const folderPath = (id) => state.folders.find((f) => f.id === id)?.path;
 const sender = (m) => m.from_name || m.from_email || 'Expéditeur inconnu';
@@ -276,15 +286,16 @@ function messageCard(m, { mode }) {
     );
   }
   actions.append(h('button', { class: 'small ghost', onclick: () => openMessage(m.id) }, 'Détails'));
-  return h('article', { class: `card prio-bar ${mode === 'a_traiter' ? prio : ''}` },
-    h('div', { class: 'card-head' },
+  return h('article', { class: `card mail ${mode === 'a_traiter' ? `prio-${prio}` : ''}` },
+    avatar(sender(m)),
+    h('div', { class: 'mail-main' },
+      h('div', { class: 'mail-top' }, h('span', { class: 'sender' }, sender(m)),
+        h('span', { class: 'date' }, fmtDate(m.received_at))),
       h('div', { class: 'card-title', onclick: () => openMessage(m.id), role: 'button', tabindex: '0',
         onkeydown: (e) => { if (e.key === 'Enter') openMessage(m.id); } }, m.subject || '(sans objet)'),
-      h('span', { class: 'meta' }, fmtDate(m.received_at))),
-    h('div', { class: 'meta' }, sender(m)),
-    a.resume ? h('p', { class: 'summary' }, a.resume) : null,
-    mode === 'a_traiter' && a.action_requise ? h('div', { class: 'action' }, a.action_requise) : null,
-    badges, actions);
+      a.resume ? h('p', { class: 'summary' }, a.resume) : null,
+      mode === 'a_traiter' && a.action_requise ? h('div', { class: 'action' }, a.action_requise) : null,
+      badges, actions));
 }
 
 async function renderMessages(view) {
@@ -486,7 +497,7 @@ function taskCard(t, reload) {
   due.addEventListener('change', () => patch({ due_at: due.value || null, due_source: due.value ? 'explicite' : 'aucune' }, 'Échéance mise à jour'));
   const proj = projectSelect(t.project_id);
   proj.addEventListener('change', () => patch({ project_id: proj.value || null }));
-  return h('article', { class: `card prio-bar ${t.priority}` },
+  return h('article', { class: `card task prio-${t.priority}` },
     h('div', { class: 'card-head' }, h('div', { class: 'card-title' }, t.title),
       t.created_by === 'ia' ? h('span', { class: 'badge' }, 'Proposée par l’IA') : null,
       t.due_at ? h('span', { class: 'badge' }, `${fmtDay(t.due_at)} · ${LABELS.due[t.due_source] || ''}`) : null),
@@ -564,43 +575,55 @@ async function renderSettings() {
   state.settings = s;
   const f = {};
   const input = (key, attrs = {}) => (f[key] = h('input', { value: s[key] ?? '', ...attrs }));
-  const check = (key, label) => h('label', { class: 'check' }, (f[key] = h('input', { type: 'checkbox', checked: s[key] })), label);
-  const days = DAYS.map((d, i) => h('label', { class: 'check' }, h('input', { type: 'checkbox', value: String(i), checked: s.work_days.includes(i) }), d));
+  const row = (label, control, hint) => h('label', { class: 'field' },
+    h('span', { class: 'field-label' }, label, hint ? h('small', {}, hint) : null), control);
+  const toggle = (key, label, hint) => h('label', { class: 'field toggle' },
+    h('span', { class: 'field-label' }, label, hint ? h('small', {}, hint) : null),
+    (f[key] = h('input', { type: 'checkbox', class: 'switch', checked: s[key] })));
+  const group = (title, footer, ...children) => h('section', { class: 'group' },
+    title ? h('h3', { class: 'group-title' }, title) : null,
+    h('div', { class: 'group-body' }, ...children),
+    footer ? h('p', { class: 'group-footer' }, footer) : null);
+  const days = h('div', { class: 'chips' }, ...DAYS.map((d, i) => h('label', { class: 'chip' },
+    h('input', { type: 'checkbox', value: String(i), checked: s.work_days.includes(i) }), d)));
   const watched = h('select', { multiple: true, size: '6', 'aria-label': 'Dossiers suivis' },
     h('option', { value: 'inbox', selected: s.watched_folders.includes('inbox') }, 'Boîte de réception'),
     ...state.folders.filter((x) => !x.system && !x.is_inbox).map((x) => h('option', { value: x.id, selected: s.watched_folders.includes(x.id) }, x.path)));
-  const form = h('form', { class: 'card' },
-    h('h3', {}, 'Synchronisation'),
-    h('div', { class: 'grid2' },
-      h('label', {}, 'Début de plage (heure de Paris)', input('work_start', { type: 'time' })),
-      h('label', {}, 'Fin de plage (exclue)', input('work_end', { type: 'time' })),
-      h('label', {}, 'Historique importé au premier passage (jours)', input('history_days', { type: 'number', min: '0', max: '60' })),
-      h('label', {}, 'Conservation des résumés (jours)', input('retention_days', { type: 'number', min: '7', max: '730' })),
-      h('label', {}, '« À savoir » archivés après (jours)', input('a_savoir_expire_days', { type: 'number', min: '1', max: '90' }))),
-    h('div', { class: 'row' }, ...days),
-    h('label', {}, 'Dossiers suivis (Ctrl/Cmd + clic pour plusieurs ; ajoutez ceux alimentés par des règles Outlook)', watched),
-    h('h3', { class: 'section' }, 'IA'),
-    check('ai_enabled', 'Analyser les mails avec l’IA (OpenRouter)'),
-    check('ai_on_bulk', 'Analyser aussi les newsletters / notifications automatiques'),
-    h('div', { class: 'grid2' },
-      h('label', {}, 'Limite d’appels IA par jour', input('ai_daily_limit', { type: 'number', min: '0', max: '1000' })),
-      h('label', {}, 'Votre nom (pour les brouillons)', input('user_name'))),
-    h('label', {}, 'Style rédactionnel', (f.writing_style = h('textarea', { rows: '3', style: 'min-height:4rem' }, s.writing_style || ''))),
-    h('label', {}, 'Signature ajoutée aux brouillons', (f.signature = h('textarea', { rows: '4', style: 'min-height:5rem' }, s.signature || ''))),
-    h('label', {}, 'Interlocuteurs prioritaires (un par ligne : adresse ou @domaine.fr)',
-      (f.priority_contacts = h('textarea', { rows: '3', style: 'min-height:4rem' }, (s.priority_contacts || []).join('\n')))),
-    h('h3', { class: 'section' }, 'Automatismes (désactivés par défaut)'),
-    check('auto_draft', 'Créer automatiquement les brouillons proposés dans Exchange'),
-    check('auto_move', 'Déplacer automatiquement les mails des projets marqués « déplacement automatique »'),
-    h('label', {}, 'Confiance minimale pour un déplacement automatique (0 à 1)', input('auto_move_min_confidence', { type: 'number', min: '0.5', max: '1', step: '0.05' })),
-    h('div', { class: 'actions' }, h('button', { class: 'primary', type: 'submit' }, 'Enregistrer les réglages')));
+
+  const form = h('form', { class: 'settings' },
+    group('Synchronisation', 'Hors de cette plage, les appels automatiques ne touchent pas à Exchange. Le bouton Synchroniser fonctionne à tout moment.',
+      row('Début de plage', input('work_start', { type: 'time' }), 'Heure de Paris'),
+      row('Fin de plage', input('work_end', { type: 'time' }), 'Exclue'),
+      h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Jours'), days),
+      row('Historique au premier passage', input('history_days', { type: 'number', min: '0', max: '60' }), 'jours'),
+      row('Conservation des résumés', input('retention_days', { type: 'number', min: '7', max: '730' }), 'jours'),
+      row('Archiver « À savoir » après', input('a_savoir_expire_days', { type: 'number', min: '1', max: '90' }), 'jours'),
+      h('label', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Dossiers suivis',
+        h('small', {}, 'Ctrl/Cmd + clic pour plusieurs — ajoutez ceux remplis par vos règles Outlook')), watched)),
+    group('Intelligence artificielle', 'Les modèles gratuits peuvent conserver les textes envoyés. Chaque mail analysé compte pour un appel.',
+      toggle('ai_enabled', 'Analyser les mails avec l’IA'),
+      toggle('ai_on_bulk', 'Analyser aussi les newsletters'),
+      row('Appels IA par jour au maximum', input('ai_daily_limit', { type: 'number', min: '0', max: '1000' }))),
+    group('Rédaction', null,
+      row('Votre nom', input('user_name')),
+      h('label', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Style rédactionnel'),
+        (f.writing_style = h('textarea', { rows: '3' }, s.writing_style || ''))),
+      h('label', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Signature', h('small', {}, 'Ajoutée à la fin des brouillons')),
+        (f.signature = h('textarea', { rows: '4' }, s.signature || ''))),
+      h('label', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Interlocuteurs prioritaires', h('small', {}, 'Un par ligne : adresse ou @domaine.fr')),
+        (f.priority_contacts = h('textarea', { rows: '3' }, (s.priority_contacts || []).join('\n'))))),
+    group('Automatismes', 'Désactivés par défaut. Chaque déplacement reste annulable dans le journal du Classement.',
+      toggle('auto_draft', 'Brouillons automatiques', 'Enregistrés dans Exchange, jamais envoyés'),
+      toggle('auto_move', 'Déplacements automatiques', 'Seulement les projets marqués « automatique »'),
+      row('Confiance minimale', input('auto_move_min_confidence', { type: 'number', min: '0.5', max: '1', step: '0.05' }), '0 à 1')),
+    h('div', { class: 'form-actions' }, h('button', { class: 'primary large', type: 'submit' }, 'Enregistrer les réglages')));
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const body = {
       work_start: f.work_start.value, work_end: f.work_end.value,
       history_days: Number(f.history_days.value), retention_days: Number(f.retention_days.value),
       a_savoir_expire_days: Number(f.a_savoir_expire_days.value), ai_daily_limit: Number(f.ai_daily_limit.value),
-      work_days: days.map((l) => l.querySelector('input')).filter((i) => i.checked).map((i) => Number(i.value)),
+      work_days: [...days.querySelectorAll('input')].filter((i) => i.checked).map((i) => Number(i.value)),
       watched_folders: [...watched.selectedOptions].map((o) => o.value),
       ai_enabled: f.ai_enabled.checked, ai_on_bulk: f.ai_on_bulk.checked, auto_draft: f.auto_draft.checked,
       auto_move: f.auto_move.checked, auto_move_min_confidence: Number(f.auto_move_min_confidence.value),
@@ -612,36 +635,87 @@ async function renderSettings() {
   });
 
   const st = state.status || {};
-  const statusCard = h('div', { class: 'card' }, h('h3', {}, 'État technique'),
-    h('dl', { class: 'kv' },
-      h('dt', {}, 'Dernière synchro réussie'), h('dd', {}, st.last_success_at ? fmtDate(st.last_success_at) : 'jamais'),
-      h('dt', {}, 'Dernier passage'), h('dd', {}, st.last_tick_at ? fmtDate(st.last_tick_at) : '—'),
-      h('dt', {}, 'Dernière erreur'), h('dd', {}, st.last_error ? `${st.last_error} (${fmtDate(st.last_error_at)})` : 'aucune'),
-      h('dt', {}, 'Dossiers initialisés'), h('dd', {}, String(st.folders_initialized?.length || 0)),
-      h('dt', {}, 'Travail restant'), h('dd', {}, st.backlog ? 'oui (repris au prochain passage)' : 'non'),
-      h('dt', {}, 'Modèle IA'), h('dd', {}, st.ai?.configured ? (st.ai.models || []).join(', ') : 'non configuré (API_OPENROUTER)'),
-      h('dt', {}, 'Appels IA aujourd’hui'), h('dd', {}, st.ai ? `${st.ai.used_today} / ${st.ai.daily_limit}` : '—')));
+  const kv = (k, v) => h('div', { class: 'field' }, h('span', { class: 'field-label' }, k), h('span', { class: 'field-value' }, v));
+  const statusGroup = group('État', null,
+    kv('Dernière synchro réussie', st.last_success_at ? fmtDate(st.last_success_at) : 'jamais'),
+    kv('Dernier passage', st.last_tick_at ? fmtDate(st.last_tick_at) : '—'),
+    kv('Dernière erreur', st.last_error ? `${st.last_error} (${fmtDate(st.last_error_at)})` : 'aucune'),
+    kv('Travail restant', st.backlog ? 'oui, repris au prochain passage' : 'non'),
+    kv('Appels IA aujourd’hui', st.ai ? `${st.ai.used_today} / ${st.ai.daily_limit}` : '—'));
 
-  main.replaceChildren(h('div', { class: 'toolbar' }, h('h2', {}, 'Réglages')), statusCard,
-    h('div', { class: 'section' }, form), h('div', { class: 'section' }, await projectsEditor()));
+  main.replaceChildren(h('div', { class: 'toolbar' }, h('h2', {}, 'Réglages')),
+    statusGroup, await modelPicker(s), form, await projectsEditor());
+}
+
+async function modelPicker(s) {
+  const select = h('select', { 'aria-label': 'Modèle IA' }, h('option', { value: '' }, 'Chargement des modèles…'));
+  const info = h('p', { class: 'group-footer' });
+  const testBtn = h('button', { type: 'button', class: 'small' }, 'Tester');
+  const result = h('span', { class: 'field-value' });
+  const box = h('section', { class: 'group' }, h('h3', { class: 'group-title' }, 'Modèle IA'),
+    h('div', { class: 'group-body' },
+      h('label', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Modèle utilisé',
+        h('small', {}, 'Liste des modèles gratuits disponibles sur OpenRouter, mise à jour automatiquement')), select),
+      h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Vérifier la disponibilité', h('small', {}, 'Test sans aucune donnée de mail (1 appel)')),
+        h('span', { class: 'inline' }, result, testBtn))),
+    info);
+  const fill = async (refresh) => {
+    try {
+      const data = await api('/api/ai/models');
+      const opts = [h('option', { value: '' }, `Par défaut — ${(data.default || []).join(' → ')}`)];
+      if (data.selected && !data.selected_available) {
+        opts.push(h('option', { value: data.selected }, `${data.selected} (plus disponible)`));
+      }
+      for (const m of data.models) {
+        const ctx = m.context_length ? ` · ${Math.round(m.context_length / 1000)}k` : '';
+        opts.push(h('option', { value: m.id }, `${m.name}${ctx}`));
+      }
+      select.replaceChildren(...opts);
+      select.value = data.selected || '';
+      info.textContent = data.selected && !data.selected_available
+        ? 'Le modèle choisi n’est plus proposé gratuitement : le repli « openrouter/free » est utilisé. Choisissez-en un autre.'
+        : `${data.models.length} modèles gratuits disponibles. En cas d’indisponibilité, le routeur gratuit d’OpenRouter prend le relais.`;
+      if (refresh) toast('Liste des modèles à jour');
+    } catch (err) {
+      select.replaceChildren(h('option', { value: s.ai_model || '' }, s.ai_model || 'Par défaut'));
+      info.textContent = err.message;
+    }
+  };
+  select.addEventListener('change', async () => {
+    const r = await run(select, () => api('/api/settings', { method: 'PUT', body: { ai_model: select.value } }),
+      select.value ? `Modèle enregistré : ${select.value}` : 'Modèle par défaut rétabli');
+    if (r) { state.settings = r; result.textContent = ''; refreshStatus(); }
+  });
+  testBtn.addEventListener('click', async () => {
+    const model = select.value || (state.status?.ai?.models || [])[0];
+    if (!model) return toast('Aucun modèle sélectionné.', true);
+    result.textContent = 'Test en cours…';
+    const r = await run(testBtn, () => api('/api/ai/test', { method: 'POST', body: { model } }));
+    if (!r) { result.textContent = ''; return; }
+    result.textContent = r.ok ? `✓ Répond en ${r.seconds} s` : `✕ Indisponible (${r.error})`;
+    result.className = `field-value ${r.ok ? 'ok-text' : 'error'}`;
+  });
+  fill(false);
+  return box;
 }
 
 async function projectsEditor() {
-  const wrap = h('div', { class: 'card' }, h('h3', {}, 'Projets'),
-    h('p', { class: 'muted' }, 'Mots-clés et interlocuteurs validés servent au rapprochement des mails ; le dossier cible alimente les propositions de classement.'));
+  const wrap = h('section', { class: 'group' }, h('h3', { class: 'group-title' }, 'Projets'),
+    h('p', { class: 'group-header-note' }, 'Mots-clés et interlocuteurs validés servent au rapprochement des mails ; le dossier cible alimente les propositions de classement.'));
   const list = h('div', { class: 'list' });
   const editor = (p = { name: '', keywords: [], contacts: [], folder_id: null, auto_move: false, active: true }) => {
     const name = h('input', { value: p.name, placeholder: 'Nom du projet (ex. Résidence Les Tilleuls)' });
     const kw = h('input', { value: (p.keywords || []).join(', '), placeholder: 'Mots-clés séparés par des virgules' });
     const ct = h('input', { value: (p.contacts || []).join(', '), placeholder: 'Interlocuteurs : adresses ou @domaine.fr' });
     const folder = folderSelect(p.folder_id, { includeInbox: false, placeholder: 'Aucun dossier cible' });
-    const auto = h('input', { type: 'checkbox', checked: p.auto_move });
+    const auto = h('input', { type: 'checkbox', class: 'switch', checked: p.auto_move });
     const split = (v) => v.split(',').map((x) => x.trim()).filter(Boolean);
     const body = () => ({ name: name.value, keywords: split(kw.value), contacts: split(ct.value), folder_id: folder.value || null, auto_move: auto.checked, active: true });
     return h('div', { class: 'card' },
       h('div', { class: 'grid2' }, h('label', {}, 'Nom', name), h('label', {}, 'Dossier cible', folder)),
       h('label', {}, 'Mots-clés', kw), h('label', {}, 'Interlocuteurs', ct),
-      h('label', { class: 'check' }, auto, 'Déplacement automatique (si l’automatisme est activé dans les réglages)'),
+      h('label', { class: 'field toggle' }, h('span', { class: 'field-label' }, 'Déplacement automatique',
+        h('small', {}, 'Si l’automatisme est activé dans les réglages')), auto),
       h('div', { class: 'actions' },
         h('button', { class: 'primary small', onclick: async (e) => {
           const r = await run(e.currentTarget, () => (p.id ? api(`/api/projects/${p.id}`, { method: 'PUT', body: body() }) : api('/api/projects', { method: 'POST', body: body() })), 'Projet enregistré');
@@ -654,7 +728,8 @@ async function projectsEditor() {
         } }, 'Supprimer') : null));
   };
   for (const p of state.projects) list.append(editor(p));
-  wrap.append(list, h('div', { class: 'actions' }, h('button', { onclick: (e) => { e.currentTarget.before(editor()); } }, 'Ajouter un projet')));
+  if (!state.projects.length) list.append(h('div', { class: 'empty' }, 'Aucun projet pour l’instant.'));
+  wrap.append(list, h('div', { class: 'actions' }, h('button', { class: 'tinted', onclick: () => { list.querySelector('.empty')?.remove(); list.append(editor()); } }, '+ Ajouter un projet')));
   return wrap;
 }
 

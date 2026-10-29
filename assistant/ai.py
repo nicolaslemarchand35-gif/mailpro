@@ -214,12 +214,76 @@ def build_messages(item, ctx):
     return [{'role': 'system', 'content': SYSTEM_PROMPT}, {'role': 'user', 'content': user}]
 
 
-def call_openrouter(messages, timeout):
+FALLBACK_MODEL = 'openrouter/free'
+_models_cache = {'at': 0.0, 'items': None}
+
+
+def models_for(cfg):
+    """Modele choisi dans les Reglages (+ repli gratuit), sinon OPENROUTER_MODEL."""
+    chosen = (cfg or {}).get('ai_model') or ''
+    if chosen:
+        return [chosen] if chosen == FALLBACK_MODEL else [chosen, FALLBACK_MODEL]
+    return config.openrouter_models()
+
+
+def is_free(model):
+    pricing = model.get('pricing') or {}
+    try:
+        return float(pricing.get('prompt', 1)) == 0 and float(pricing.get('completion', 1)) == 0
+    except (TypeError, ValueError):
+        return False
+
+
+def list_free_models(max_age=3600):
+    """Modeles gratuits proposes par OpenRouter (texte en sortie), mis en cache 1 h."""
+    import requests
+    if _models_cache['items'] is not None and time.monotonic() - _models_cache['at'] < max_age:
+        return _models_cache['items']
+    try:
+        response = requests.get('https://openrouter.ai/api/v1/models', timeout=(5, 15), allow_redirects=False)
+        data = response.json().get('data') if response.status_code == 200 else None
+    except (requests.RequestException, ValueError):
+        data = None
+    if not isinstance(data, list):
+        if _models_cache['items'] is not None:
+            return _models_cache['items']
+        raise AiError('ModelsUnavailable')
+    items = []
+    for m in data:
+        if not isinstance(m, dict) or not isinstance(m.get('id'), str) or not is_free(m):
+            continue
+        arch = m.get('architecture') or {}
+        outputs = set(arch.get('output_modalities') or ['text'])
+        inputs = set(arch.get('input_modalities') or ['text'])
+        # Texte en entree ET uniquement du texte en sortie ; pas de classifieurs de moderation.
+        if outputs != {'text'} or 'text' not in inputs or re.search(r'safety|guard|moderat', m['id'], re.I):
+            continue
+        items.append({'id': m['id'][:150], 'name': str(m.get('name') or m['id'])[:150],
+                      'context_length': m.get('context_length')})
+    items.sort(key=lambda m: (m['id'] != FALLBACK_MODEL, m['name'].lower()))
+    _models_cache.update(at=time.monotonic(), items=items)
+    return items
+
+
+def test_model(model, timeout=30):
+    """Appel minimal SANS donnee de mail : verifie disponibilite, JSON et temps de reponse."""
+    started = time.monotonic()
+    content, used = call_openrouter([
+        {'role': 'system', 'content': 'Tu reponds uniquement en JSON, en francais.'},
+        {'role': 'user', 'content': 'Resume en 8 mots : "Merci de valider le devis de plomberie avant vendredi." '
+                                    'Format : {"resume": "..."}'},
+    ], timeout, models=[model])
+    parsed = extract_json(content)
+    return {'ok': True, 'model': used, 'seconds': round(time.monotonic() - started, 1),
+            'sample': str(parsed.get('resume', ''))[:200]}
+
+
+def call_openrouter(messages, timeout, models=None):
     import requests
     key = config.openrouter_key()
     if not key:
         raise AiError('NoApiKey')
-    models = config.openrouter_models()
+    models = models or config.openrouter_models()
     payload = {
         'model': models[0], 'messages': messages, 'temperature': 0.2, 'max_tokens': 1800,
         'response_format': {'type': 'json_object'},
@@ -254,6 +318,8 @@ def call_openrouter(messages, timeout):
         raise AiQuotaError('RateLimited')
     if response.status_code == 402:
         raise AiQuotaError('PaymentRequired')
+    if response.status_code in (400, 404) and 'model' in (getattr(response, 'text', '') or '').lower():
+        raise AiError('ModelUnavailable')
     if response.status_code != 200:
         raise AiError(f'HTTP{response.status_code}')
     try:
@@ -373,7 +439,7 @@ def validate_output(raw, item, ctx):
 
 def analyze_with_ai(item, ctx, timeout=20):
     started = time.monotonic()
-    content, model = call_openrouter(build_messages(item, ctx), timeout)
+    content, model = call_openrouter(build_messages(item, ctx), timeout, models=models_for(ctx.get('settings')))
     result = validate_output(extract_json(content), item, ctx)
     result['modele'] = model[:100]
     result['duree_s'] = round(time.monotonic() - started, 1)

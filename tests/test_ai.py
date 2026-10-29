@@ -141,3 +141,32 @@ class OpenRouterTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ModelChoiceTests(unittest.TestCase):
+    def test_models_for(self):
+        with patch.dict(os.environ, {'OPENROUTER_MODEL': 'a:free,b:free'}):
+            self.assertEqual(ai.models_for({'ai_model': ''}), ['a:free', 'b:free'])
+            self.assertEqual(ai.models_for({'ai_model': 'x/y:free'}), ['x/y:free', 'openrouter/free'])
+            self.assertEqual(ai.models_for({'ai_model': 'openrouter/free'}), ['openrouter/free'])
+
+    def test_free_models_filtered_and_cached(self):
+        class Resp:
+            status_code = 200
+
+            def json(self):
+                return {'data': [
+                    {'id': 'paid/model', 'name': 'Paid', 'pricing': {'prompt': '0.000001', 'completion': '0.000002'}},
+                    {'id': 'z/free:free', 'name': 'Zeta', 'pricing': {'prompt': '0', 'completion': '0'}},
+                    {'id': 'openrouter/free', 'name': 'Free router', 'pricing': {'prompt': '0', 'completion': '0'}},
+                    {'id': 'img/free', 'name': 'Img', 'pricing': {'prompt': '0', 'completion': '0'},
+                     'architecture': {'output_modalities': ['image']}},
+                ]}
+        calls = []
+        ai._models_cache.update(at=0.0, items=None)
+        with patch('requests.get', lambda *a, **k: calls.append(1) or Resp()):
+            first = ai.list_free_models()
+            ai.list_free_models()
+        self.assertEqual([m['id'] for m in first], ['openrouter/free', 'z/free:free'])
+        self.assertEqual(len(calls), 1)
+        ai._models_cache.update(at=0.0, items=None)

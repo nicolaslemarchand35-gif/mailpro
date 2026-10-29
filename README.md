@@ -105,8 +105,10 @@ Modèle par défaut : `nvidia/nemotron-3.5-lightning:free`, avec repli sur `open
 suivre la tentative d'injection ; `openrouter/free` seul a fait 4 sur 6 en environ 9 s. **Limite
 constatée** : les petits modèles gratuits formulent parfois un engagement dans les brouillons
 (« nous envoyons une équipe ») malgré la consigne contraire. Relisez toujours avant d'envoyer.
-Pour changer de modèle, modifiez simplement `OPENROUTER_MODEL` sur Render (liste séparée par
-des virgules = ordre de repli).
+Pour changer de modèle : **Réglages → Modèle IA**. La liste des modèles gratuits est lue en direct
+sur OpenRouter (cache d'une heure) ; le choix est enregistré immédiatement, le bouton **Tester**
+vérifie la disponibilité sans envoyer de mail, et `openrouter/free` sert de repli. « Par défaut »
+utilise `OPENROUTER_MODEL` (Render).
 
 ### 4. Render (hébergement)
 

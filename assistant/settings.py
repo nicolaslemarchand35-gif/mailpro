@@ -16,6 +16,7 @@ DEFAULTS = {
     'signature': '',
     'writing_style': 'Vouvoiement, ton professionnel et cordial, phrases courtes.',
     'ai_enabled': True,
+    'ai_model': '',                         # vide = OPENROUTER_MODEL (Render)
     'ai_on_bulk': False,                    # newsletters / notifications : pas d'IA
     'ai_daily_limit': 45,                   # garde-fou quota OpenRouter gratuit
     'auto_draft': False,                    # brouillons Exchange automatiques
@@ -25,6 +26,7 @@ DEFAULTS = {
 }
 
 TIME_RE = re.compile(r'^([01]\d|2[0-3]):[0-5]\d$')
+MODEL_RE = re.compile(r'^[A-Za-z0-9._/:-]{0,150}$')
 
 
 def merged(raw):
@@ -80,6 +82,11 @@ def validate(patch):
                 value = [v.lower() for v in value]
             if key == 'watched_folders' and not value:
                 value = ['inbox']
+        elif key == 'ai_model':
+            if not isinstance(value, str) or not MODEL_RE.match(value.strip()):
+                errors.append('Identifiant de modèle invalide')
+                continue
+            value = value.strip()
         elif isinstance(default, str):
             if not isinstance(value, str):
                 errors.append(f'{key} : texte attendu')

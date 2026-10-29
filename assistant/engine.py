@@ -772,7 +772,7 @@ def status_summary(store, cfg, now=None):
         'locked': bool(lock.get('owner') and lock.get('lease_until') and lock['lease_until'] > now),
         'in_work_window': window, 'stale': stale,
         'ai': {'configured': ai.ai_configured(), 'enabled': cfg['ai_enabled'],
-               'models': config.openrouter_models(),
+               'models': ai.models_for(cfg),
                'used_today': usage.get('count', 0) if usage.get('day') == settings_mod.local_today(cfg, now).date().isoformat() else 0,
                'daily_limit': cfg['ai_daily_limit'], 'backoff_until': usage.get('backoff_until')},
         'folders_initialized': [c.get('ref') for _, c in cursors if c.get('initial_done')],

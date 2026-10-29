@@ -7,7 +7,7 @@ from functools import wraps
 
 from flask import Flask, g, jsonify, request, send_from_directory
 
-from . import auth, config, engine as engine_mod
+from . import ai as ai_mod, auth, config, engine as engine_mod
 from . import settings as settings_mod
 from .ews import EwsError, probe_mailbox, stable_hash
 from . import store as store_mod
@@ -601,6 +601,29 @@ def create_app(engine_factory=None, firebase_verifier=None):
     def delete_project(pid):
         store().delete('projects', pid)
         return ok()
+
+    @app.get('/api/ai/models')
+    @require_user
+    def ai_models():
+        cfg = settings_mod.merged(store().get('settings', 'main'))
+        try:
+            models = ai_mod.list_free_models()
+        except ai_mod.AiError:
+            return fail(502, 'models_unavailable', 'Liste des modèles OpenRouter indisponible pour le moment.')
+        ids = {m['id'] for m in models}
+        return ok({'models': models, 'selected': cfg['ai_model'], 'default': config.openrouter_models(),
+                   'selected_available': not cfg['ai_model'] or cfg['ai_model'] in ids})
+
+    @app.post('/api/ai/test')
+    @require_user
+    def ai_test():
+        model = json_body().get('model')
+        if not isinstance(model, str) or not settings_mod.MODEL_RE.match(model) or not model:
+            return fail(400, 'bad_model')
+        try:
+            return ok(ai_mod.test_model(model))
+        except ai_mod.AiError as exc:
+            return ok({'ok': False, 'error': exc.code})
 
     @app.get('/api/settings')
     @require_user

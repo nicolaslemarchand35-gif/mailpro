@@ -28,23 +28,28 @@
   </div>
 
   <div id="app" class="layout" hidden>
-    <header class="topbar">
-      <div class="brand">Assistant mail</div>
-      <div id="sync-status" class="sync-status" aria-live="polite"></div>
-      <div class="top-actions">
-        <button id="btn-sync" type="button">Synchroniser</button>
-        <button id="btn-logout" type="button" class="ghost">Déconnexion</button>
-      </div>
-    </header>
     <nav class="tabs" id="tabs" aria-label="Sections">
-      <button data-view="a_traiter" class="active">À traiter <span class="count" data-count="a_traiter"></span></button>
-      <button data-view="brouillons">Brouillons <span class="count" data-count="brouillons"></span></button>
-      <button data-view="a_savoir">À savoir <span class="count" data-count="a_savoir"></span></button>
-      <button data-view="taches">Tâches <span class="count" data-count="taches"></span></button>
-      <button data-view="classement">Classement <span class="count" data-count="classement"></span></button>
-      <button data-view="reglages">Réglages</button>
+      <div class="brand"><img src="/static/icon.svg" alt="" width="28" height="28"><span>Assistant mail</span></div>
+      <div class="tab-list">
+        <button data-view="a_traiter" class="active"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13l2.5-7.5A2 2 0 0 1 7.4 4h9.2a2 2 0 0 1 1.9 1.5L21 13v5a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M3 13h5l1.5 2.5h5L16 13h5"/></svg><span class="tab-label">À traiter</span><span class="count" data-count="a_traiter"></span></button>
+        <button data-view="brouillons"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg><span class="tab-label">Brouillons</span><span class="count" data-count="brouillons"></span></button>
+        <button data-view="a_savoir"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v6"/><path d="M12 7.5v.01"/></svg><span class="tab-label">À savoir</span><span class="count" data-count="a_savoir"></span></button>
+        <button data-view="taches"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/></svg><span class="tab-label">Tâches</span><span class="count" data-count="taches"></span></button>
+        <button data-view="classement"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="tab-label">Classement</span><span class="count" data-count="classement"></span></button>
+        <button data-view="reglages"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg><span class="tab-label">Réglages</span></button>
+      </div>
     </nav>
-    <main id="main" class="main" tabindex="-1"></main>
+    <div class="content">
+      <header class="topbar">
+        <div class="brand mobile-only"><img src="/static/icon.svg" alt="" width="24" height="24"><span>Assistant mail</span></div>
+        <div id="sync-status" class="sync-status" aria-live="polite"></div>
+        <div class="top-actions">
+          <button id="btn-sync" type="button" class="tinted">Synchroniser</button>
+          <button id="btn-logout" type="button" class="ghost">Déconnexion</button>
+        </div>
+      </header>
+      <main id="main" class="main" tabindex="-1"></main>
+    </div>
   </div>
 
   <div id="drawer" class="drawer" hidden>
