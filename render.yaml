@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: assistant-mail
+    runtime: python
+    plan: free
+    region: frankfurt
+    buildCommand: pip install --require-hashes -r requirements.txt
+    startCommand: gunicorn app:application --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120 --access-logfile - --access-logformat '%(t)s "%(m)s %(U)s" %(s)s %(L)ss'
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: OVH_EMAIL
+        sync: false
+      - key: OVH_PASSWORD
+        sync: false
+      - key: ADMIN_API_TOKEN
+        generateValue: true
+      - key: CRON_SECRET
+        generateValue: true
+      - key: FIRESTORE_ENABLED
+        value: "false"
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: FIREBASE_WEB_CONFIG
+        sync: false
+      - key: ALLOWED_UIDS
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: nvidia/nemotron-3.5-lightning:free,openrouter/free
+      - key: TICK_BUDGET_SECONDS
+        value: "24"

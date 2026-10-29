@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Assistant mail</title>
+  <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <script type="module" src="/static/app.js"></script>
+</head>
+<body>
+  <div id="login" class="login" hidden>
+    <form id="login-form" class="login-card" autocomplete="on">
+      <h1>Assistant mail</h1>
+      <p class="muted">Accès privé.</p>
+      <div id="login-firebase" hidden>
+        <label>Adresse e-mail<input type="email" name="email" autocomplete="username" required></label>
+        <label>Mot de passe<input type="password" name="password" autocomplete="current-password" required></label>
+      </div>
+      <div id="login-token" hidden>
+        <label>Jeton d'accès<input type="password" name="token" autocomplete="off"></label>
+      </div>
+      <label class="check"><input type="checkbox" name="remember"> Rester connecté sur cet appareil</label>
+      <button type="submit" class="primary">Se connecter</button>
+      <p id="login-error" class="error" role="alert"></p>
+    </form>
+  </div>
+
+  <div id="app" class="layout" hidden>
+    <header class="topbar">
+      <div class="brand">Assistant mail</div>
+      <div id="sync-status" class="sync-status" aria-live="polite"></div>
+      <div class="top-actions">
+        <button id="btn-sync" type="button">Synchroniser</button>
+        <button id="btn-logout" type="button" class="ghost">Déconnexion</button>
+      </div>
+    </header>
+    <nav class="tabs" id="tabs" aria-label="Sections">
+      <button data-view="a_traiter" class="active">À traiter <span class="count" data-count="a_traiter"></span></button>
+      <button data-view="brouillons">Brouillons <span class="count" data-count="brouillons"></span></button>
+      <button data-view="a_savoir">À savoir <span class="count" data-count="a_savoir"></span></button>
+      <button data-view="taches">Tâches <span class="count" data-count="taches"></span></button>
+      <button data-view="classement">Classement <span class="count" data-count="classement"></span></button>
+      <button data-view="reglages">Réglages</button>
+    </nav>
+    <main id="main" class="main" tabindex="-1"></main>
+  </div>
+
+  <div id="drawer" class="drawer" hidden>
+    <div class="drawer-panel" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+      <div class="drawer-head">
+        <h2 id="drawer-title"></h2>
+        <button type="button" class="ghost" id="drawer-close" aria-label="Fermer">✕</button>
+      </div>
+      <div id="drawer-body" class="drawer-body"></div>
+    </div>
+  </div>
+  <div id="toast" class="toast" role="status" hidden></div>
+</body>
+</html>
