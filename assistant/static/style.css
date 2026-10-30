@@ -192,6 +192,11 @@ input.switch:checked::after { transform: translateX(20px); }
   margin-right: .45rem; vertical-align: middle; position: relative; top: -1px; }
 .card.task.prio-haute .card-head::before { align-self: center; margin-right: 0; }
 
+.destination { margin-top: .5rem; font-size: .82rem; color: var(--text-3); }
+.brief-intro { font-size: 1.02rem; line-height: 1.55; margin-bottom: 1.4rem; }
+.brief-points { margin: .3rem 0 0; padding-left: 1.1rem; }
+.brief-points li { margin: .35rem 0; }
+.brief-points a { font-size: .8rem; }
 .empty { text-align: center; color: var(--text-2); padding: 3rem 1rem; background: var(--surface); border-radius: var(--radius); box-shadow: var(--shadow); }
 .notice { padding: .7rem .9rem; border-radius: var(--radius-s); background: var(--orange-soft); color: var(--orange-text); margin: .6rem 0; font-size: .92rem; }
 .section { margin-top: 2rem; }
@@ -307,6 +312,9 @@ label .inline > select { flex: 1; }
   .actions button { flex: 1 1 auto; }
   .actions.spread button { flex: 0 0 auto; }
   .hide-sm { display: none; }
+  .field:has(> .inline) { flex-wrap: wrap; }
+  .field > .inline { flex: 1 1 100%; justify-content: flex-end; }
+  .field > .inline > input { flex: 1; width: auto; }
   .drawer { align-items: flex-end; }
   .drawer-panel { height: 94%; border-radius: 14px 14px 0 0; overflow: hidden; animation-name: sheet; }
   .field > input:not(.switch), .field > select { max-width: 55%; }

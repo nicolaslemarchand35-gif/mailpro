@@ -374,6 +374,132 @@ class EngineTests(unittest.TestCase):
         out = self.engine().create_project_folder('p1')
         self.assertEqual(self.box.folders[out['folder_id']]['parent_id'], 'CHANTIERS')
 
+    # -- rangement a la fin du traitement / infos / corbeille --------------------------
+    def first(self):
+        return next(iter(self.messages().items()))
+
+    def test_treated_goes_to_project_folder(self):
+        self.store.set('projects', 'p1', {'name': 'Dupont', 'keywords': ['dupont'], 'folder_id': 'DUPONT'})
+        self.ai_result = fake_analysis(projet_id='p1')
+        self.box.add(subject='Chantier Dupont', received=NOW - timedelta(hours=1))
+        self.engine().tick()
+        doc_id, _ = self.first()
+        out = self.engine().file_treated(doc_id)
+        self.assertEqual(out['status'], 'range')
+        self.assertEqual(self.store.get('messages', doc_id)['folder_id'], 'DUPONT')
+
+    def test_treated_without_target_goes_to_a_classer(self):
+        self.box.add(received=NOW - timedelta(hours=1))
+        self.engine().tick()
+        doc_id, _ = self.first()
+        out = self.engine().file_treated(doc_id)
+        folder = self.box.folders[self.store.get('messages', doc_id)['folder_id']]
+        self.assertEqual((out['status'], folder['name'], folder['parent_id']), ('range', 'À classer', 'ROOT'))
+        self.box.add(received=NOW - timedelta(minutes=30))  # dossier reutilise, pas recree
+        self.engine().tick()
+        other = [d for d, m in self.messages().items() if d != doc_id][0]
+        self.engine().file_treated(other)
+        self.assertEqual(sum(1 for f in self.box.folders.values() if f['name'] == 'À classer'), 1)
+
+    def test_treated_leave_mode_flags_manual(self):
+        self.store.set('settings', 'main', {'treated_fallback': 'leave'})
+        self.box.add(received=NOW - timedelta(hours=1))
+        self.engine().tick()
+        doc_id, _ = self.first()
+        self.assertEqual(self.engine().file_treated(doc_id)['status'], 'manuel')
+        msg = self.store.get('messages', doc_id)
+        self.assertEqual((msg['classement'], msg['folder_id']), ('manuel', 'INBOX'))
+
+    def test_info_mail_auto_filed(self):
+        self.ai_result = fake_analysis('a_savoir', echeance=None, echeance_source='aucune', reponse_necessaire=False,
+                                       brouillon=None, taches=[], confiance=0.9)
+        self.box.add(received=NOW - timedelta(hours=1))
+        self.engine().tick()
+        _, msg = self.first()
+        self.assertEqual(self.box.folders[msg['folder_id']]['name'], 'Infos')
+        self.assertEqual((msg['view'], msg['filing']), ('a_savoir', 'done'))  # reste visible dans À savoir
+
+    def test_info_needing_reply_stays_in_inbox(self):
+        self.ai_result = fake_analysis('a_savoir', brouillon=None, taches=[])
+        self.box.add(received=NOW - timedelta(hours=1))
+        self.engine().tick()
+        _, msg = self.first()
+        self.assertEqual(msg['folder_id'], 'INBOX')
+
+    def test_info_goes_to_project_folder(self):
+        self.store.set('projects', 'p1', {'name': 'Dupont', 'folder_id': 'DUPONT'})
+        self.ai_result = fake_analysis('a_savoir', echeance=None, reponse_necessaire=False, brouillon=None,
+                                       taches=[], projet_id='p1')
+        self.box.add(received=NOW - timedelta(hours=1))
+        self.engine().tick()
+        self.assertEqual(self.first()[1]['folder_id'], 'DUPONT')
+
+    def test_bulk_trashed_and_undo_is_respected(self):
+        self.box.add(received=NOW - timedelta(hours=1), headers={'list-unsubscribe': '<x>'})
+        self.engine().tick()
+        doc_id, msg = self.first()
+        self.assertEqual((msg['folder_id'], msg['trashed']), ('TRASH', True))
+        audit_id = next(a for a, e in self.store.query('audit') if e['op'] == 'deplacement')
+        self.engine().undo_move(audit_id)
+        self.engine().tick(manual=True)
+        msg = self.store.get('messages', doc_id)
+        self.assertEqual((msg['folder_id'], msg['filing']), ('INBOX', 'refuse'))
+
+    def test_trash_disabled(self):
+        self.store.set('settings', 'main', {'auto_trash': False})
+        self.box.add(received=NOW - timedelta(hours=1), headers={'list-unsubscribe': '<x>'})
+        self.engine().tick()
+        self.assertEqual(self.first()[1]['folder_id'], 'INBOX')
+
+    def test_move_all_proposals(self):
+        self.ai_result = fake_analysis(dossier_id='DUPONT')
+        self.box.add(received=NOW - timedelta(hours=1))
+        self.box.add(received=NOW - timedelta(hours=2))
+        self.engine().tick()
+        self.assertEqual(self.engine().move_all_proposals(), {'moved': 2, 'failed': 0})
+        self.assertEqual({m['folder_id'] for m in self.messages().values()}, {'DUPONT'})
+
+    # -- brief ----------------------------------------------------------------------
+    def info_result(self):
+        return fake_analysis('a_savoir', echeance=None, reponse_necessaire=False, brouillon=None, taches=[],
+                             resume='Dalle R+2 décalée au 12 novembre.')
+
+    def test_brief_generated_once_after_brief_time(self):
+        self.ai_result = self.info_result()
+        self.box.add(received=NOW - timedelta(hours=3))
+        self.now = datetime(2026, 10, 29, 7, 20, tzinfo=timezone.utc)  # 08:20 Paris
+        self.engine().tick()
+        self.assertIsNone(self.store.get('briefs', '2026-10-29'))
+        self.now = datetime(2026, 10, 29, 7, 31, tzinfo=timezone.utc)  # 08:31 Paris
+        with patch('assistant.ai.brief_synthesis', side_effect=ai.AiError('Timeout')):
+            self.engine().tick()
+        brief = self.store.get('briefs', '2026-10-29')
+        self.assertEqual(brief['source'], 'regles')
+        self.assertEqual(brief['rubriques'][0]['points'][0]['texte'], 'Dalle R+2 décalée au 12 novembre.')
+        doc_id, msg = self.first()
+        self.assertEqual(msg['briefed_on'], '2026-10-29')
+        with patch('assistant.ai.brief_synthesis') as synth:
+            self.engine().tick()
+            synth.assert_not_called()  # une seule fois par jour
+
+    def test_brief_with_ai_and_todo(self):
+        self.ai_result = self.info_result()
+        self.box.add(received=NOW - timedelta(hours=3))
+        self.engine().tick()
+        info_id = next(iter(self.messages()))
+        self.store.set('tasks', 't1', {'title': 'Relancer', 'status': 'a_faire', 'due_at': '2026-10-28'})
+        self.ai_result = fake_analysis(echeance='2026-10-27')
+        self.box.add(received=NOW - timedelta(hours=2))
+        self.engine().tick()
+        self.now = datetime(2026, 10, 29, 8, 0, tzinfo=timezone.utc)
+        with patch('assistant.ai.brief_synthesis', return_value={
+                'source': 'ia', 'model': 'm', 'resume': 'Une info.',
+                'rubriques': [{'titre': 'Dupont', 'points': [{'texte': 'x', 'message_ids': [info_id]}]}]}):
+            brief = self.engine().generate_brief(force=True)
+        self.assertEqual((brief['source'], brief['resume']), ('ia', 'Une info.'))
+        self.assertEqual(len(brief['todo']['overdue']), 1)
+        self.assertEqual([t['title'] for t in brief['tasks_due']], ['Relancer'])
+
     # -- maintenance -------------------------------------------------------------
     def test_purge_old_messages(self):
         self.box.add(received=NOW - timedelta(hours=1))

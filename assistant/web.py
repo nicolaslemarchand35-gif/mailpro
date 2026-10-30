@@ -221,6 +221,7 @@ def create_app(engine_factory=None, firebase_verifier=None):
             'classement': m.get('classement'), 'classement_target': m.get('classement_target'),
             'classement_path': (folders or {}).get(m.get('classement_target')),
             'is_bulk': m.get('is_bulk'), 'ai_error': m.get('ai_error'),
+            'filing': m.get('filing'), 'trashed': m.get('trashed'), 'briefed_on': m.get('briefed_on'),
             'analysis': {k: analysis.get(k) for k in (
                 'source', 'categorie', 'resume', 'action_requise', 'priorite', 'echeance',
                 'echeance_source', 'echeance_citation', 'confiance', 'reponse_necessaire',
@@ -238,6 +239,8 @@ def create_app(engine_factory=None, firebase_verifier=None):
         s = store()
         if view == 'classement':
             rows = s.query('messages', 'classement', '==', 'propose', limit=300)
+        elif view == 'classement_manuel':
+            rows = [r for r in s.query('messages', 'classement', '==', 'manuel', limit=300) if r[1].get('in_watched')]
         elif view in VIEWS:
             rows = s.query('messages', 'view', '==', view, limit=300)
         else:
@@ -249,7 +252,14 @@ def create_app(engine_factory=None, firebase_verifier=None):
         else:
             rows.sort(key=lambda r: r[1].get('received_at') or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
         folders = folder_names()
-        return ok({'items': [message_out(i, m, folders) for i, m in rows]})
+        items = [message_out(i, m, folders) for i, m in rows]
+        if view == 'a_traiter':
+            # Destination prevue quand l'utilisateur cliquera « Traité ».
+            eng = make_engine()
+            for item, (_, m) in zip(items, rows):
+                target = eng.file_target(m) if m.get('in_watched') else None
+                item['file_target_path'] = folders.get(target) if target else None
+        return ok({'items': items})
 
     @app.get('/api/messages/<doc_id>')
     @require_user
@@ -300,9 +310,14 @@ def create_app(engine_factory=None, firebase_verifier=None):
             if update.get('treatment') is None and m.get('treatment') in ('vu', 'ignore'):
                 update['treatment'] = 'ouvert'
         if 'project_id' in data:
-            if data['project_id'] is not None and not s.get('projects', str(data['project_id'])):
+            project = s.get('projects', str(data['project_id'])) if data['project_id'] is not None else None
+            if data['project_id'] is not None and not project:
                 return fail(400, 'bad_project')
             update['project_id'] = data['project_id']
+            # Le dossier du projet devient la proposition de classement.
+            if project and project.get('folder_id') and m.get('in_watched') and \
+                    project['folder_id'] != m.get('folder_id') and project['folder_id'] in folder_names():
+                update.update({'classement': 'propose', 'classement_target': project['folder_id']})
         if 'classement' in data:
             if data['classement'] not in ('refuse', 'propose'):
                 return fail(400, 'bad_classement')
@@ -316,7 +331,17 @@ def create_app(engine_factory=None, firebase_verifier=None):
         update['view'] = engine_mod.compute_view(m)
         update['updated_at'] = utcnow()
         s.set('messages', doc_id, update, merge=True)
-        return ok(message_out(doc_id, {**m, **update}, folder_names()))
+        out = message_out(doc_id, {**m, **update}, folder_names())
+        if update.get('treatment') == 'traite':
+            # « Traité » range toujours le mail (dossier du projet, proposé, ou « À classer »).
+            with WRITE_LOCK:
+                try:
+                    out['filing_result'] = make_engine().file_treated(doc_id)
+                except engine_mod.UserError as exc:
+                    out['filing_result'] = {'status': 'erreur', 'message': str(exc)}
+                except EwsError as exc:
+                    out['filing_result'] = {'status': 'erreur', 'message': f'Exchange : {exc.code}'}
+        return ok(out)
 
     @app.post('/api/messages/<doc_id>/reanalyze')
     @require_user
@@ -429,6 +454,39 @@ def create_app(engine_factory=None, firebase_verifier=None):
         with WRITE_LOCK:
             folder_id = make_engine().create_folder(data.get('parent_id'), data.get('name'))
         return ok({'id': folder_id})
+
+    @app.post('/api/classement/move-all')
+    @require_user
+    def move_all():
+        with WRITE_LOCK:
+            return ok(make_engine().move_all_proposals())
+
+    @app.get('/api/briefs')
+    @require_user
+    def list_briefs():
+        rows = store().query('briefs', order_by='day', descending=True, limit=30)
+        return ok({'days': [b.get('day') for _, b in rows]})
+
+    @app.get('/api/briefs/<day>')
+    @require_user
+    def get_brief(day):
+        if day == 'latest':
+            rows = store().query('briefs', order_by='day', descending=True, limit=1)
+            return ok({'brief': rows[0][1] if rows else None})
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', day):
+            return fail(400, 'bad_day')
+        return ok({'brief': store().get('briefs', day)})
+
+    @app.post('/api/briefs/generate')
+    @require_user
+    def generate_brief():
+        eng = make_engine()
+        eng._deadline = None
+        with WRITE_LOCK:
+            try:
+                return ok({'brief': eng.generate_brief(force=True)})
+            finally:
+                eng.close()
 
     @app.get('/api/audit')
     @require_user
@@ -628,11 +686,13 @@ def create_app(engine_factory=None, firebase_verifier=None):
     @require_user
     def ai_models():
         cfg = settings_mod.merged(store().get('settings', 'main'))
+        paid = request.args.get('paid') == '1'
         try:
-            models = ai_mod.list_free_models()
+            models = ai_mod.list_models(include_paid=paid)
+            known = {m['id'] for m in ai_mod.list_models(include_paid=True)}
         except ai_mod.AiError:
             return fail(502, 'models_unavailable', 'Liste des modèles OpenRouter indisponible pour le moment.')
-        ids = {m['id'] for m in models}
+        ids = known
         return ok({'models': models, 'selected': cfg['ai_model'], 'default': config.openrouter_models(),
                    'selected_available': not cfg['ai_model'] or cfg['ai_model'] in ids})
 

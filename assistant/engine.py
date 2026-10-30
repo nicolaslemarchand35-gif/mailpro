@@ -118,7 +118,7 @@ class Engine:
             return {'status': 'busy'}
         self._deadline = time.monotonic() + self.budget
         counters = {'created': 0, 'removed': 0, 'analyzed': 0, 'ai_calls': 0, 'moved': 0,
-                    'drafts': 0, 'purged': 0}
+                    'drafts': 0, 'purged': 0, 'brief': 0}
         result = {'status': 'ok'}
         error = None
         try:
@@ -129,6 +129,8 @@ class Engine:
             backlog |= not self.sync_folder('sentitems', 'sent', cfg, counters)
             self.reconcile_drafts(counters)
             backlog |= not self.analyze_pending(cfg, meta, counters)
+            self.maybe_brief(cfg, counters)
+            self.file_pending(cfg, counters)
             self.housekeeping(cfg, counters)
             result['backlog'] = backlog
         except EwsBusy:
@@ -443,6 +445,7 @@ class Engine:
             self.store.set('messages', doc_id, update, merge=True)
             doc.update(update)
         self.propose_tasks(doc_id, doc)
+        self.auto_file(doc_id, doc, cfg, counters)
         if analysis.get('reponse_necessaire') and analysis.get('brouillon') and not doc.get('replied_at'):
             existing = self.store.get('drafts', doc_id)
             # Une proposition rejetee ou deja enregistree dans Exchange n'est jamais ecrasee.
@@ -670,14 +673,19 @@ class Engine:
             self.close()
 
     # -- classement ------------------------------------------------------------
-    def move_message(self, doc_id, folder_id, by='user'):
+    def move_message(self, doc_id, folder_id, by='user', allow_trash=False):
         msg = self.store.get('messages', doc_id)
         if not msg or msg.get('direction') != 'received':
             raise UserError('Message introuvable.')
         meta = self.folders_meta()
-        target = next((f for f in meta.get('folders') or [] if f['id'] == folder_id), None)
-        if not target or target.get('system'):
-            raise UserError('Dossier de destination invalide.')
+        if allow_trash and folder_id == 'deleteditems':
+            # Elements supprimes : recuperable dans Outlook et annulable depuis le journal.
+            folder_id = (meta.get('distinguished') or {}).get('deleteditems') or folder_id
+            target = {'id': folder_id, 'path': 'Éléments supprimés'}
+        else:
+            target = next((f for f in meta.get('folders') or [] if f['id'] == folder_id), None)
+            if not target or target.get('system'):
+                raise UserError('Dossier de destination invalide.')
         if msg.get('folder_id') == folder_id:
             raise UserError('Le mail est déjà dans ce dossier.')
         audit_id = self.audit('deplacement', message_id=doc_id, subject=msg.get('subject'),
@@ -716,6 +724,7 @@ class Engine:
         self.store.set('messages', entry['message_id'], {
             'ews_id': new_id or msg['ews_id'], 'folder_id': entry['from_folder_id'],
             'in_watched': entry['from_folder_id'] in watched, 'classement': 'refuse', 'updated_at': self.now(),
+            'filing': 'refuse', 'trashed': False,
         }, merge=True)
         self.store.set('audit', audit_id, {'result': 'annule', 'undone_at': self.now()}, merge=True)
         self.audit('annulation', message_id=entry['message_id'], subject=entry.get('subject'),
@@ -782,6 +791,232 @@ class Engine:
             self.audit('dossier_cree', to_path=path, result='ok', by='user')
         return {'folder_id': folder_id, 'path': path, 'created': created}
 
+    # -- rangement : fin de traitement, infos, corbeille -----------------------------
+    SPECIAL_FOLDERS = {
+        'manual_folder': (('a classer', 'classement manuel', 'a ranger'), 'À classer'),
+        'info_folder': (('infos', 'info', 'informations'), 'Infos'),
+    }
+
+    def special_folder(self, key, cfg=None, create=True):
+        """Dossier « À classer » ou « Infos » : reglage, sinon dossier existant, sinon cree a la racine."""
+        cfg = cfg or self.settings()
+        meta = self.folders_meta()
+        folders = [f for f in meta.get('folders') or [] if not f.get('system')]
+        chosen = cfg.get(key)
+        if chosen and any(f['id'] == chosen for f in folders):
+            return chosen
+        names, create_name = self.SPECIAL_FOLDERS[key]
+        found = sorted((f for f in folders if ai.normalize(f['name']) in names),
+                       key=lambda f: f.get('path', '').count(' / '))
+        if found:
+            return found[0]['id']
+        if not create:
+            return None
+        folder_id = self.client().create_folder('msgfolderroot', create_name)
+        self.refresh_folders(force=True)
+        self.audit('dossier_cree', to_path=self.folder_path(folder_id), result='ok', by='auto')
+        return folder_id
+
+    def known_folder(self, folder_id, meta=None):
+        meta = meta or self.folders_meta()
+        return bool(folder_id) and any(f['id'] == folder_id and not f.get('system') for f in meta.get('folders') or [])
+
+    def file_target(self, msg):
+        """Destination d'un mail : choix fait dans Classement, sinon dossier du projet, sinon dossier IA."""
+        meta = self.folders_meta()
+        analysis = msg.get('analysis') or {}
+        project = dict(self.projects()).get(msg.get('project_id') or analysis.get('projet_id')) or {}
+        for candidate in (msg.get('classement_target'), project.get('folder_id'), analysis.get('dossier_id')):
+            if self.known_folder(candidate, meta):
+                return candidate
+        return None
+
+    def file_treated(self, doc_id):
+        """Appele quand l'utilisateur marque un mail « Traité » : le range."""
+        msg = self.store.get('messages', doc_id)
+        if not msg or msg.get('direction') != 'received':
+            raise UserError('Message introuvable.')
+        if not msg.get('in_watched'):
+            return {'status': 'deja_range', 'path': self.folder_path(msg.get('folder_id'))}
+        try:
+            cfg = self.settings()
+            target = self.file_target(msg)
+            if not target:
+                if cfg['treated_fallback'] == 'leave':
+                    self.store.set('messages', doc_id, {'classement': 'manuel'}, merge=True)
+                    return {'status': 'manuel'}
+                target = self.special_folder('manual_folder', cfg)
+            if target == msg.get('folder_id'):
+                return {'status': 'deja_range', 'path': self.folder_path(target)}
+            audit_id = self.move_message(doc_id, target, by='traite')
+        finally:
+            self.close()
+        return {'status': 'range', 'path': self.folder_path(target), 'audit_id': audit_id}
+
+    def info_filing_target(self, doc, cfg):
+        """Destination automatique d'un mail d'info ou inutile, ou None s'il doit rester en place."""
+        analysis = doc.get('analysis') or {}
+        category = doc.get('category_override') or analysis.get('categorie')
+        if not doc.get('in_watched') or doc.get('filing') in ('done', 'refuse') or \
+                doc.get('classement') in ('fait', 'refuse') or (doc.get('treatment') or 'ouvert') != 'ouvert':
+            return None
+        confidence = float(analysis.get('confiance') or 0)
+        from_ai = analysis.get('source') == 'ia'
+        if category == 'ignorer' and cfg['auto_trash'] and not doc.get('project_id'):
+            if doc.get('is_bulk') or (from_ai and confidence >= cfg['trash_min_confidence']):
+                return 'deleteditems'
+            return None
+        if category != 'a_savoir' or not cfg['auto_file_info'] or not from_ai:
+            return None
+        # Une info qui attend une reponse ou une tache reste dans la boite ; les dates sont reprises dans le brief.
+        if analysis.get('reponse_necessaire') or analysis.get('taches') or confidence < cfg['info_min_confidence']:
+            return None
+        project = dict(self.projects()).get(doc.get('project_id') or analysis.get('projet_id')) or {}
+        if self.known_folder(project.get('folder_id')):
+            return project['folder_id']
+        return 'info'
+
+    def auto_file(self, doc_id, doc, cfg, counters=None):
+        """Range un mail d'info (dossier projet / Infos) ou inutile (corbeille). Erreurs non bloquantes."""
+        target = self.info_filing_target(doc, cfg)
+        if not target:
+            return False
+        if self.remaining() < 8:
+            self.store.set('messages', doc_id, {'filing': 'pending'}, merge=True)
+            return False
+        try:
+            if target == 'info':
+                target = self.special_folder('info_folder', cfg)
+            if target == doc.get('folder_id'):
+                self.store.set('messages', doc_id, {'filing': 'done'}, merge=True)
+                return False
+            self.move_message(doc_id, target, by='auto', allow_trash=target == 'deleteditems')
+        except (UserError, EwsError) as exc:
+            self.store.set('messages', doc_id, {'filing': 'pending',
+                                                'filing_error': getattr(exc, 'code', 'UserError')}, merge=True)
+            return False
+        self.store.set('messages', doc_id, {'filing': 'done', 'filing_error': None,
+                                            'trashed': target == 'deleteditems'}, merge=True)
+        if counters is not None:
+            counters['moved'] += 1
+        return True
+
+    def file_pending(self, cfg, counters):
+        """Reprise des rangements automatiques interrompus (budget, erreur Exchange)."""
+        for doc_id, doc in self.store.query('messages', 'filing', '==', 'pending', limit=20):
+            if self.remaining() < 8:
+                return
+            self.auto_file(doc_id, doc, cfg, counters)
+
+    def move_all_proposals(self):
+        """Valide toutes les propositions de l'onglet Classement."""
+        moved, failed = 0, 0
+        try:
+            for doc_id, msg in self.store.query('messages', 'classement', '==', 'propose', limit=100):
+                target = msg.get('classement_target')
+                if not self.known_folder(target) or not msg.get('in_watched'):
+                    continue
+                try:
+                    self.move_message(doc_id, target, by='user')
+                    moved += 1
+                except (UserError, EwsError):
+                    failed += 1
+        finally:
+            self.close()
+        return {'moved': moved, 'failed': failed}
+
+    # -- brief quotidien -------------------------------------------------------------
+    def maybe_brief(self, cfg, counters):
+        """Genere le brief du jour au premier passage apres l'heure choisie (une fois par jour)."""
+        if not cfg['brief_enabled']:
+            return
+        local = settings_mod.local_today(cfg, self.now())
+        if local.weekday() not in cfg['work_days'] or local.strftime('%H:%M') < cfg['brief_time']:
+            return
+        if self.store.get('briefs', local.date().isoformat()):
+            return
+        # Matin charge (analyses en cours) : on reporte au passage suivant, au plus tard 1 h apres.
+        hour, minute = map(int, cfg['brief_time'].split(':'))
+        late = local.hour * 60 + local.minute >= hour * 60 + minute + 60
+        if self.remaining() < 15 and not late:
+            return
+        self.generate_brief(cfg)
+        counters['brief'] = 1
+
+    def generate_brief(self, cfg=None, force=False):
+        cfg = cfg or self.settings()
+        now = self.now()
+        local = settings_mod.local_today(cfg, now)
+        day = local.date().isoformat()
+        existing = self.store.get('briefs', day)
+        if existing and not force:
+            return existing
+        previous = [b for _, b in self.store.query('briefs', order_by='day', descending=True, limit=3)
+                    if b.get('day') != day]
+        start = (existing or {}).get('period_start') or \
+            (previous[0].get('period_end') if previous else None) or now - timedelta(days=1)
+        projects = dict(self.projects())
+        meta = self.folders_meta()
+        # Toute info pas encore presentee dans un brief (week-end, absence, premier brief inclus).
+        rows = self.store.query('messages', 'received_at', '>=', now - timedelta(days=14), limit=1000)
+        infos, trashed, presented = [], 0, []
+        for doc_id, m in sorted(rows, key=lambda r: r[1].get('received_at')):
+            if m.get('direction') != 'received' or m.get('briefed_on') not in (None, day):
+                continue
+            presented.append(doc_id)
+            analysis = m.get('analysis') or {}
+            category = m.get('category_override') or analysis.get('categorie')
+            if m.get('trashed') or category == 'ignorer':
+                trashed += 1
+                continue
+            if category != 'a_savoir':
+                continue
+            pid = m.get('project_id') or analysis.get('projet_id')
+            infos.append({
+                'id': doc_id, 'subject': m.get('subject'), 'from': m.get('from_name') or m.get('from_email'),
+                'received_at': m.get('received_at'), 'summary': analysis.get('resume'),
+                'project': (projects.get(pid) or {}).get('name'),
+                'folder_path': self.folder_path(m.get('folder_id'), meta) if not m.get('in_watched') else None,
+            })
+        today = local.date().isoformat()
+        todo = {'overdue': [], 'today': [], 'open_count': 0}
+        for doc_id, m in self.store.query('messages', 'view', '==', 'a_traiter', limit=300):
+            todo['open_count'] += 1
+            analysis = m.get('analysis') or {}
+            due = analysis.get('echeance')
+            entry = {'id': doc_id, 'subject': m.get('subject'), 'from': m.get('from_name') or m.get('from_email'),
+                     'due': due, 'action': analysis.get('action_requise')}
+            if due and due < today:
+                todo['overdue'].append(entry)
+            elif due == today:
+                todo['today'].append(entry)
+        tasks_due = [{'id': tid, 'title': t.get('title'), 'due': t.get('due_at'),
+                      'project': (projects.get(t.get('project_id')) or {}).get('name')}
+                     for tid, t in self.store.query('tasks', 'status', 'in', ['a_faire', 'en_cours', 'en_attente'], limit=500)
+                     if t.get('due_at') and t['due_at'] <= today]
+        tasks_due.sort(key=lambda t: t['due'])
+        brief = {
+            'day': day, 'generated_at': now, 'period_start': start, 'period_end': now,
+            'infos': infos, 'trashed_count': trashed, 'todo': todo, 'tasks_due': tasks_due,
+            'source': 'regles', 'model': None, 'resume': None, 'rubriques': ai.brief_fallback(infos),
+        }
+        if infos and cfg['ai_enabled'] and ai.ai_configured() and self.ai_budget_left(cfg) > 0 and \
+                self.remaining() > 12:
+            try:
+                synthesis = ai.brief_synthesis(infos, cfg, local.date(),
+                                               timeout=max(8, min(20, int(self.remaining()) - 4)))
+                self.count_ai_call(cfg)
+                brief.update(synthesis)
+            except ai.AiQuotaError:
+                self.count_ai_call(cfg, quota_error=True)
+            except ai.AiError:
+                self.count_ai_call(cfg)
+        self.store.set('briefs', day, brief)
+        for doc_id in presented:
+            if (self.store.get('messages', doc_id) or {}).get('view') in ('a_savoir', 'ignore', 'archive'):
+                self.store.set('messages', doc_id, {'briefed_on': day}, merge=True)
+        return brief
+
     # -- maintenance -----------------------------------------------------------
     def housekeeping(self, cfg, counters):
         if self.remaining() < 4:
@@ -794,7 +1029,8 @@ class Engine:
             counters['purged'] += 1
         expire = now - timedelta(days=cfg['a_savoir_expire_days'])
         for doc_id, m in self.store.query('messages', 'view', '==', 'a_savoir', limit=300):
-            if m.get('received_at') and m['received_at'] < expire:
+            if m.get('received_at') and m['received_at'] < expire and \
+                    (m.get('briefed_on') or not cfg['brief_enabled']):
                 self.store.set('messages', doc_id, {'treatment': 'vu', 'view': 'archive'}, merge=True)
         audit_cutoff = now - timedelta(days=365)
         for audit_id, _ in self.store.query('audit', 'at', '<', audit_cutoff, limit=50):

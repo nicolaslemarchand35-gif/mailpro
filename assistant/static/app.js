@@ -30,7 +30,7 @@ const LABELS = {
     enregistre: 'Enregistré dans Brouillons Exchange', modifie_dans_outlook: 'Modifié dans Outlook (protégé)',
     envoye_ou_supprime: 'Envoyé ou supprimé dans Outlook', erreur: 'Erreur', rejete: 'Rejeté',
   },
-  audit: { deplacement: 'Déplacement', annulation: 'Annulation', brouillon: 'Brouillon créé', brouillon_remplace: 'Brouillon remplacé', dossier_cree: 'Dossier créé' },
+  audit: { deplacement: 'Déplacement', corbeille: 'Corbeille', annulation: 'Annulation', brouillon: 'Brouillon créé', brouillon_remplace: 'Brouillon remplacé', dossier_cree: 'Dossier créé' },
 };
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 
@@ -271,7 +271,17 @@ function messageCard(m, { mode }) {
   };
   if (mode === 'a_traiter') {
     actions.append(
-      h('button', { class: 'primary small', onclick: patch({ treatment: 'traite' }, 'Marqué comme traité') }, 'Traité'),
+      h('button', { class: 'primary small', onclick: async (e) => {
+        const r = await run(e.currentTarget, () => api(`/api/messages/${m.id}`, { method: 'PATCH', body: { treatment: 'traite' } }));
+        const f = r?.filing_result || {};
+        if (r) {
+          if (f.status === 'range') toast(`Traité et rangé dans : ${f.path}`);
+          else if (f.status === 'manuel') toast('Traité. Aucun dossier trouvé : à ranger plus tard (onglet Classement).');
+          else if (f.status === 'erreur') toast(`Traité, mais non rangé : ${f.message}`, true);
+          else toast('Marqué comme traité');
+        }
+        render();
+      } }, 'Traité'),
       h('button', { class: 'small', onclick: patch({ category: 'a_savoir' }, 'Déplacé vers À savoir') }, '→ À savoir'),
       h('button', { class: 'small', onclick: patch({ category: 'ignorer' }, 'Ignoré') }, 'Ignorer'),
     );
@@ -295,7 +305,11 @@ function messageCard(m, { mode }) {
         onkeydown: (e) => { if (e.key === 'Enter') openMessage(m.id); } }, m.subject || '(sans objet)'),
       a.resume ? h('p', { class: 'summary' }, a.resume) : null,
       mode === 'a_traiter' && a.action_requise ? h('div', { class: 'action' }, a.action_requise) : null,
-      badges, actions));
+      badges,
+      mode === 'a_traiter' && m.in_watched !== false ? h('div', { class: 'destination' },
+        m.file_target_path ? `Une fois traité → ${m.file_target_path}`
+          : (state.settings?.treated_fallback === 'leave' ? 'Une fois traité → à ranger manuellement' : 'Une fois traité → À classer')) : null,
+      actions));
 }
 
 async function renderMessages(view) {
@@ -516,18 +530,84 @@ function taskCard(t, reload) {
       } }, 'Supprimer')));
 }
 
+// ---------------------------------------------------------------- brief du jour
+async function renderBrief() {
+  const main = $('#main');
+  const daySel = h('select', { 'aria-label': 'Jour du brief' });
+  const body = h('div', {}, h('p', { class: 'muted' }, 'Chargement…'));
+  const regen = h('button', { class: 'tinted', onclick: async (e) => {
+    const r = await run(e.currentTarget, () => api('/api/briefs/generate', { method: 'POST' }), 'Brief mis à jour');
+    if (r) render();
+  } }, 'Générer maintenant');
+  main.replaceChildren(h('div', { class: 'toolbar' }, h('h2', {}, 'Aujourd’hui'), h('span', { class: 'spacer' }), daySel, regen), body);
+  const [list, latest] = await Promise.all([api('/api/briefs'), api('/api/briefs/latest')]);
+  daySel.replaceChildren(...(list.days.length ? list.days.map((d) => h('option', { value: d }, fmtDay(d)))
+    : [h('option', { value: '' }, 'Aucun brief')]));
+  const show = (b) => {
+    if (!b) {
+      body.replaceChildren(h('div', { class: 'empty' }, `Pas encore de brief. Il est préparé chaque jour ouvré à ${state.settings?.brief_time || '08:30'} ; vous pouvez aussi cliquer « Générer maintenant ».`));
+      return;
+    }
+    const link = (id, text) => h('a', { href: '#', onclick: (e) => { e.preventDefault(); openMessage(id); } }, text);
+    const mailList = (items, render) => h('div', { class: 'group-body' }, ...items.map((x) => h('div', { class: 'field' }, render(x))));
+    const blocks = [];
+    blocks.push(h('p', { class: 'meta' }, `Préparé le ${fmtDate(b.generated_at)} · période depuis ${fmtDate(b.period_start)}`,
+      b.source === 'ia' ? ` · synthèse IA (${b.model})` : ' · résumé sans IA'));
+    if (b.resume) blocks.push(h('div', { class: 'card brief-intro' }, b.resume));
+    const todo = b.todo || {};
+    if ((todo.overdue || []).length || (todo.today || []).length || (b.tasks_due || []).length) {
+      const items = [
+        ...(todo.overdue || []).map((x) => ({ ...x, kind: 'En retard', cls: 'haute' })),
+        ...(todo.today || []).map((x) => ({ ...x, kind: 'Aujourd’hui', cls: 'warn' })),
+      ];
+      blocks.push(h('section', { class: 'group' }, h('h3', { class: 'group-title' }, 'À ne pas oublier'),
+        h('div', { class: 'group-body' },
+          ...items.map((x) => h('div', { class: 'field' }, h('span', { class: 'field-label' }, link(x.id, x.subject || '(sans objet)'),
+            h('small', {}, [x.from, x.action].filter(Boolean).join(' — '))), h('span', { class: `badge ${x.cls}` }, `${x.kind} · ${fmtDay(x.due)}`))),
+          ...(b.tasks_due || []).map((t) => h('div', { class: 'field' }, h('span', { class: 'field-label' }, `Tâche : ${t.title}`,
+            t.project ? h('small', {}, t.project) : null), h('span', { class: 'badge warn' }, fmtDay(t.due)))))));
+    }
+    blocks.push(h('section', { class: 'group' }, h('h3', { class: 'group-title' }, `Informations (${(b.infos || []).length})`),
+      (b.rubriques || []).length ? h('div', { class: 'list' }, ...(b.rubriques || []).map((r) => h('div', { class: 'card' },
+        h('h3', {}, r.titre),
+        h('ul', { class: 'brief-points' }, ...r.points.map((p) => h('li', {}, p.texte, ' ',
+          ...(p.message_ids || []).map((id, n) => link(id, `[${n + 1}]`)).flatMap((a) => [a, ' '])))))))
+        : h('div', { class: 'empty' }, 'Aucune information reçue sur la période.')));
+    if (b.trashed_count) blocks.push(h('p', { class: 'group-footer' }, `${b.trashed_count} mail(s) sans intérêt (newsletters, notifications) placés dans Éléments supprimés — récupérables depuis Outlook ou le journal du Classement.`));
+    if ((b.infos || []).length) {
+      blocks.push(h('section', { class: 'group' }, h('h3', { class: 'group-title' }, 'Détail des mails d’information'),
+        mailList(b.infos, (x) => [h('span', { class: 'field-label' }, link(x.id, x.subject || '(sans objet)'),
+          h('small', {}, [x.from, x.project].filter(Boolean).join(' · '))),
+        h('span', { class: 'field-value' }, x.folder_path ? `Rangé : ${x.folder_path.split(' / ').pop()}` : 'Boîte de réception')])));
+    }
+    body.replaceChildren(...blocks);
+  };
+  show(latest.brief);
+  if (latest.brief) daySel.value = latest.brief.day;
+  daySel.addEventListener('change', async () => show((await api(`/api/briefs/${daySel.value}`)).brief));
+}
+
 // ---------------------------------------------------------------- classement
 async function renderClassement() {
   const main = $('#main');
   main.replaceChildren(h('div', { class: 'toolbar' }, h('h2', {}, 'Classement'), h('span', { class: 'spacer' }),
     h('button', { onclick: async (e) => { await run(e.currentTarget, loadFolders, 'Arborescence actualisée'); render(); } }, 'Actualiser les dossiers')),
-  h('p', { class: 'muted' }, 'Propositions de rangement dans vos dossiers Outlook. Rien n’est déplacé sans votre validation (sauf projets en déplacement automatique, annulables dans le journal).'));
-  const [props, audit] = await Promise.all([api('/api/messages?view=classement'), api('/api/audit')]);
+  h('p', { class: 'muted' }, 'Propositions de rangement dans vos dossiers Outlook. Les mails traités et les mails d’information sont rangés automatiquement ; tout déplacement est annulable dans le journal.'));
+  const [props, audit, manual] = await Promise.all([api('/api/messages?view=classement'), api('/api/audit'),
+    api('/api/messages?view=classement_manuel')]);
   const list = h('div', { class: 'list' });
-  for (const m of props.items) {
+  if (props.items.length > 1) {
+    list.append(h('div', { class: 'actions' }, h('button', { class: 'primary', onclick: async (e) => {
+      if (!confirm(`Déplacer les ${props.items.length} mails vers les dossiers proposés ?`)) return;
+      const r = await run(e.currentTarget, () => api('/api/classement/move-all', { method: 'POST' }));
+      if (r) { toast(`${r.moved} mail(s) déplacé(s)${r.failed ? `, ${r.failed} en échec` : ''} — annulables dans le journal`); render(); }
+    } }, `Tout déplacer (${props.items.length})`)));
+  }
+  for (const m of [...manual.items.map((x) => ({ ...x, manual: true })), ...props.items]) {
     const sel = folderSelect(m.classement_target, { includeInbox: false });
     list.append(h('article', { class: 'card' },
       h('div', { class: 'card-head' }, h('div', { class: 'card-title', onclick: () => openMessage(m.id) }, m.subject || '(sans objet)'),
+        m.manual ? h('span', { class: 'badge warn' }, 'Traité — à ranger') : null,
         h('span', { class: 'meta' }, fmtDate(m.received_at))),
       h('div', { class: 'meta' }, sender(m)),
       h('div', { class: 'row', style: 'margin-top:.5rem' }, sel,
@@ -541,7 +621,7 @@ async function renderClassement() {
           render();
         } }, 'Laisser en place'))));
   }
-  if (!props.items.length) list.append(h('div', { class: 'empty' }, 'Aucune proposition de classement.'));
+  if (!props.items.length && !manual.items.length) list.append(h('div', { class: 'empty' }, 'Aucune proposition de classement.'));
 
   const parentSel = folderSelect('', { placeholder: 'À la racine de la boîte' });
   const nameInput = h('input', { placeholder: 'Nom du nouveau dossier', maxlength: '120' });
@@ -612,6 +692,18 @@ async function renderSettings() {
         (f.signature = h('textarea', { rows: '4' }, s.signature || ''))),
       h('label', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Interlocuteurs prioritaires', h('small', {}, 'Un par ligne : adresse ou @domaine.fr')),
         (f.priority_contacts = h('textarea', { rows: '3' }, (s.priority_contacts || []).join('\n'))))),
+    group('Rangement et brief', 'Les mails inutiles vont dans Éléments supprimés (récupérables). Tout déplacement est annulable dans le journal du Classement.',
+      h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Mail traité sans dossier connu'),
+        (f.treated_fallback = h('select', {}, h('option', { value: 'manual_folder', selected: s.treated_fallback === 'manual_folder' }, 'Ranger dans « À classer »'),
+          h('option', { value: 'leave', selected: s.treated_fallback === 'leave' }, 'Laisser, à ranger plus tard')))),
+      h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Dossier « À classer »'), (f.manual_folder = specialFolderSelect(s.manual_folder, 'À classer'))),
+      toggle('auto_file_info', 'Ranger les mails d’information', 'Dans le dossier du projet, sinon dans « Infos »'),
+      h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Dossier « Infos »'), (f.info_folder = specialFolderSelect(s.info_folder, 'Infos'))),
+      row('Confiance minimale (infos)', input('info_min_confidence', { type: 'number', min: '0.5', max: '1', step: '0.05' }), '0 à 1'),
+      toggle('auto_trash', 'Mettre les mails inutiles à la corbeille', 'Newsletters, notifications, publicités'),
+      row('Confiance minimale (corbeille)', input('trash_min_confidence', { type: 'number', min: '0.5', max: '1', step: '0.05' }), 'Les newsletters détectées sont toujours concernées'),
+      toggle('brief_enabled', 'Brief quotidien'),
+      row('Heure du brief', input('brief_time', { type: 'time' }), 'Jours ouvrés, au premier passage après cette heure')),
     group('Automatismes', 'Désactivés par défaut. Chaque déplacement reste annulable dans le journal du Classement.',
       toggle('auto_draft', 'Brouillons automatiques', 'Enregistrés dans Exchange, jamais envoyés'),
       toggle('auto_move', 'Déplacements automatiques', 'Seulement les projets marqués « automatique »'),
@@ -629,6 +721,10 @@ async function renderSettings() {
       auto_move: f.auto_move.checked, auto_move_min_confidence: Number(f.auto_move_min_confidence.value),
       user_name: f.user_name.value, writing_style: f.writing_style.value, signature: f.signature.value,
       priority_contacts: f.priority_contacts.value.split('\n'),
+      treated_fallback: f.treated_fallback.value, manual_folder: f.manual_folder.value, info_folder: f.info_folder.value,
+      auto_file_info: f.auto_file_info.checked, info_min_confidence: Number(f.info_min_confidence.value),
+      auto_trash: f.auto_trash.checked, trash_min_confidence: Number(f.trash_min_confidence.value),
+      brief_enabled: f.brief_enabled.checked, brief_time: f.brief_time.value,
     };
     const r = await run(form.querySelector('button[type=submit]'), () => api('/api/settings', { method: 'PUT', body }), 'Réglages enregistrés');
     if (r) state.settings = r;
@@ -647,40 +743,64 @@ async function renderSettings() {
     statusGroup, await modelPicker(s), form, await projectsEditor());
 }
 
+function specialFolderSelect(selected, name) {
+  const sel = h('select', {}, h('option', { value: '' }, `Automatique (« ${name} », créé si absent)`));
+  for (const x of state.folders) if (!x.system && !x.is_inbox) sel.append(h('option', { value: x.id, selected: x.id === selected }, x.path));
+  return sel;
+}
+
 async function modelPicker(s) {
   const select = h('select', { 'aria-label': 'Modèle IA' }, h('option', { value: '' }, 'Chargement des modèles…'));
+  const paidToggle = h('input', { type: 'checkbox', class: 'switch' });
+  const customInput = h('input', { placeholder: 'fournisseur/modele', 'aria-label': 'Identifiant de modèle' });
+  const customBtn = h('button', { type: 'button', class: 'small tinted' }, 'Utiliser');
   const info = h('p', { class: 'group-footer' });
   const testBtn = h('button', { type: 'button', class: 'small' }, 'Tester');
   const result = h('span', { class: 'field-value' });
   const box = h('section', { class: 'group' }, h('h3', { class: 'group-title' }, 'Modèle IA'),
     h('div', { class: 'group-body' },
       h('label', { class: 'field stack' }, h('span', { class: 'field-label' }, 'Modèle utilisé',
-        h('small', {}, 'Liste des modèles gratuits disponibles sur OpenRouter, mise à jour automatiquement')), select),
+        h('small', {}, 'Liste des modèles disponibles sur OpenRouter, mise à jour automatiquement')), select),
+      h('label', { class: 'field toggle' }, h('span', { class: 'field-label' }, 'Afficher aussi les modèles payants',
+        h('small', {}, 'Consomment vos crédits OpenRouter à chaque mail analysé')), paidToggle),
+      h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Autre identifiant', h('small', {}, 'ex. typesafe/jev-router')),
+        h('span', { class: 'inline' }, customInput, customBtn)),
       h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Vérifier la disponibilité', h('small', {}, 'Test sans aucune donnée de mail (1 appel)')),
         h('span', { class: 'inline' }, result, testBtn))),
     info);
   const fill = async (refresh) => {
     try {
-      const data = await api('/api/ai/models');
+      const data = await api(`/api/ai/models${paidToggle.checked ? '?paid=1' : ''}`);
       const opts = [h('option', { value: '' }, `Par défaut — ${(data.default || []).join(' → ')}`)];
       if (data.selected && !data.selected_available) {
         opts.push(h('option', { value: data.selected }, `${data.selected} (plus disponible)`));
       }
+      const priceText = (m) => (m.free ? 'gratuit' : (m.price ? `${m.price.input} $ / ${m.price.output} $ par M jetons` : 'prix variable'));
+      if (data.selected && data.selected_available && !data.models.some((m) => m.id === data.selected)) {
+        opts.push(h('option', { value: data.selected }, data.selected));
+      }
       for (const m of data.models) {
         const ctx = m.context_length ? ` · ${Math.round(m.context_length / 1000)}k` : '';
-        opts.push(h('option', { value: m.id }, `${m.name}${ctx}`));
+        opts.push(h('option', { value: m.id }, `${m.name}${ctx} · ${priceText(m)}`));
       }
       select.replaceChildren(...opts);
       select.value = data.selected || '';
       info.textContent = data.selected && !data.selected_available
-        ? 'Le modèle choisi n’est plus proposé gratuitement : le repli « openrouter/free » est utilisé. Choisissez-en un autre.'
-        : `${data.models.length} modèles gratuits disponibles. En cas d’indisponibilité, le routeur gratuit d’OpenRouter prend le relais.`;
+        ? 'Le modèle choisi n’est plus proposé par OpenRouter : le repli « openrouter/free » est utilisé. Choisissez-en un autre.'
+        : `${data.models.length} modèles ${paidToggle.checked ? '' : 'gratuits '}disponibles. En cas d’indisponibilité, le routeur gratuit d’OpenRouter prend le relais.`;
       if (refresh) toast('Liste des modèles à jour');
     } catch (err) {
       select.replaceChildren(h('option', { value: s.ai_model || '' }, s.ai_model || 'Par défaut'));
       info.textContent = err.message;
     }
   };
+  paidToggle.addEventListener('change', () => fill(false));
+  customBtn.addEventListener('click', async () => {
+    const id = customInput.value.trim();
+    if (!id) return toast('Saisissez un identifiant de modèle.', true);
+    const r = await run(customBtn, () => api('/api/settings', { method: 'PUT', body: { ai_model: id } }), `Modèle enregistré : ${id}`);
+    if (r) { state.settings = r; customInput.value = ''; fill(false); refreshStatus(); }
+  });
   select.addEventListener('change', async () => {
     const r = await run(select, () => api('/api/settings', { method: 'PUT', body: { ai_model: select.value } }),
       select.value ? `Modèle enregistré : ${select.value}` : 'Modèle par défaut rétabli');
@@ -823,6 +943,7 @@ async function render() {
     else if (state.view === 'taches') await renderTasks();
     else if (state.view === 'classement') await renderClassement();
     else if (state.view === 'reglages') await renderSettings();
+    else if (state.view === 'aujourdhui') await renderBrief();
   } catch (err) {
     main.replaceChildren(h('div', { class: 'empty' }, err.message || 'Erreur de chargement.'));
   }
@@ -835,7 +956,8 @@ async function start() {
   $('#app').hidden = false;
   await Promise.all([loadProjects(), loadFolders(), refreshStatus()]);
   const saved = sessionStorage.getItem('view');
-  await setView(saved || 'a_traiter');
+  try { state.settings = await api('/api/settings'); } catch (_) { /* best-effort */ }
+  await setView(saved || 'aujourdhui');
 }
 
 async function boot() {

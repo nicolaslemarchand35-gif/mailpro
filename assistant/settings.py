@@ -16,15 +16,26 @@ DEFAULTS = {
     'signature': '',
     'writing_style': 'Vouvoiement, ton professionnel et cordial, phrases courtes.',
     'ai_enabled': True,
-    'ai_model': '',
-    'project_parent_folder': '',            # dossier "Affaires" ; vide = detection automatique                         # vide = OPENROUTER_MODEL (Render)
+    'ai_model': '',                         # vide = OPENROUTER_MODEL (Render)
+    'project_parent_folder': '',            # dossier "Affaires" ; vide = detection automatique
     'ai_on_bulk': False,                    # newsletters / notifications : pas d'IA
-    'ai_daily_limit': 45,                   # garde-fou quota OpenRouter gratuit
+    'ai_daily_limit': 300,                  # garde-fou (OpenRouter : 1000/jour avec 10 $ de credits)
     'auto_draft': False,                    # brouillons Exchange automatiques
     'auto_move': False,                     # deplacements automatiques (projets valides)
     'auto_move_min_confidence': 0.85,
     'a_savoir_expire_days': 10,
+    # Classement a la fin du traitement et rangement automatique des infos.
+    'treated_fallback': 'manual_folder',    # sans dossier connu : 'manual_folder' ou 'leave'
+    'manual_folder': '',                    # vide = dossier « À classer » (cree au besoin)
+    'info_folder': '',                      # vide = dossier « Infos » (cree au besoin)
+    'auto_file_info': True,                 # ranger les mails d'info des leur analyse
+    'info_min_confidence': 0.7,
+    'auto_trash': True,                     # mails inutiles -> Elements supprimes (recuperables)
+    'trash_min_confidence': 0.8,
+    'brief_enabled': True,
+    'brief_time': '08:30',
 }
+CHOICES = {'treated_fallback': ('manual_folder', 'leave')}
 
 TIME_RE = re.compile(r'^([01]\d|2[0-3]):[0-5]\d$')
 MODEL_RE = re.compile(r'^[A-Za-z0-9._/:-]{0,150}$')
@@ -52,7 +63,11 @@ def validate(patch):
             except (ZoneInfoNotFoundError, ValueError):
                 errors.append('Fuseau horaire invalide')
                 continue
-        elif key in ('work_start', 'work_end'):
+        elif key in CHOICES:
+            if value not in CHOICES[key]:
+                errors.append(f'{key} : valeur invalide')
+                continue
+        elif key in ('work_start', 'work_end', 'brief_time'):
             if not isinstance(value, str) or not TIME_RE.match(value):
                 errors.append(f'{key} : format HH:MM attendu')
                 continue

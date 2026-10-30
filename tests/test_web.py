@@ -184,7 +184,7 @@ class WebTests(unittest.TestCase):
         r = self.send('PUT', '/api/settings', {'ai_model': 'vendor/model:free'})
         self.assertEqual(r.json['ai_model'], 'vendor/model:free')
         self.assertEqual(self.send('PUT', '/api/settings', {'ai_model': 'bad model!'}).status_code, 400)
-        with patch('assistant.ai.list_free_models', return_value=[{'id': 'other:free', 'name': 'O', 'context_length': 1}]):
+        with patch('assistant.ai.list_models', return_value=[{'id': 'other:free', 'name': 'O', 'context_length': 1, 'free': True, 'price': None}]):
             r = self.get('/api/ai/models')
         self.assertFalse(r.json['selected_available'])
         with patch('assistant.ai.test_model', return_value={'ok': True, 'model': 'x', 'seconds': 1.0, 'sample': 's'}):
