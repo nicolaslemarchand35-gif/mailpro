@@ -1,0 +1,27 @@
+name: reveil-render
+# Reveille le service Render Free avant la plage de travail.
+# cron-job.org abandonne apres 30 s alors que le redemarrage prend environ 1 min :
+# ici on attend jusqu'a 2 min par tentative. Ensuite, les appels /internal/tick de
+# cron-job.org toutes les 10 min maintiennent le service eveille pendant la journee.
+on:
+  schedule:
+    # Lundi-vendredi, 05:40 et 06:40 UTC = 06:40/07:40 a Paris en hiver, 07:40/08:40 en ete.
+    - cron: '40 5,6 * * 1-5'
+  workflow_dispatch: {}
+permissions: {}
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Reveiller le service
+        env:
+          APP_URL: ${{ vars.APP_URL || 'https://mailpro-ue0f.onrender.com' }}
+        run: |
+          for attempt in 1 2 3 4; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 120 "$APP_URL/healthz" || true)
+            echo "Tentative $attempt : HTTP $code"
+            if [ "$code" = "200" ]; then echo "Service eveille."; exit 0; fi
+            sleep 15
+          done
+          echo "Le service ne repond pas." && exit 1

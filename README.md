@@ -171,6 +171,12 @@ dans le journal.
 5. Le serveur vérifie aussi la plage horaire (réglable dans **Réglages**) : un appel hors plage
    ne touche pas à Exchange. Si vous changez la plage, modifiez aussi la planification cron-job.org.
 
+**Réveil du matin (GitHub Actions)** : le fichier `.github/workflows/wake.yml` appelle `/healthz`
+du lundi au vendredi vers 06:40 et 07:40 (heure de Paris en hiver ; 07:40 et 08:40 en été) en
+attendant jusqu'à 2 minutes, ce que cron-job.org ne sait pas faire (limite de 30 s). L'adresse
+du service peut être changée via la variable de dépôt `APP_URL` (Settings → Secrets and
+variables → Actions → Variables). Test manuel : onglet Actions → reveil-render → Run workflow.
+
 **Réveil de Render** : le service gratuit s'endort après 15 min sans visite et met environ une
 minute à redémarrer ; cron-job.org abandonne à 30 s. Le premier appel du matin peut donc être
 signalé en échec par cron-job.org alors que le serveur a bien démarré : c'est attendu, le passage
