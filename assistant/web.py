@@ -461,6 +461,46 @@ def create_app(engine_factory=None, firebase_verifier=None):
         with WRITE_LOCK:
             return ok(make_engine().move_all_proposals())
 
+    @app.post('/api/history/scan')
+    @require_user
+    def history_scan():
+        data = json_body()
+        try:
+            start = date.fromisoformat(str(data.get('start')))
+            end = date.fromisoformat(str(data.get('end')))
+        except ValueError:
+            return fail(400, 'invalid', 'Dates invalides (AAAA-MM-JJ).')
+        if end < start:
+            return fail(400, 'invalid', 'La date de fin doit suivre la date de début.')
+        folder = data.get('folder') or 'inbox'
+        if folder != 'inbox' and folder not in folder_names():
+            return fail(400, 'invalid', 'Dossier source inconnu.')
+        offset = data.get('offset') or 0
+        if not isinstance(offset, int) or offset < 0:
+            return fail(400, 'invalid', 'Décalage invalide.')
+        with WRITE_LOCK:
+            result = make_engine().history_scan(folder, start, end, offset, use_ai=data.get('use_ai', True) is not False)
+        names = folder_names()
+        for item in result['items']:
+            item['target_path'] = {'deleteditems': 'Éléments supprimés', 'info': 'Infos (créé au besoin)'}.get(
+                item['target']) or names.get(item['target'])
+        return ok(result)
+
+    @app.post('/api/history/move')
+    @require_user
+    def history_move():
+        data = json_body()
+        moves = data.get('moves')
+        if not isinstance(moves, list) or not moves or len(moves) > 100:
+            return fail(400, 'invalid', 'Sélection vide ou trop grande (100 au maximum).')
+        folder = data.get('folder') or 'inbox'
+        for move in moves:
+            if not isinstance(move, dict):
+                return fail(400, 'invalid')
+            move['from_folder'] = folder
+        with WRITE_LOCK:
+            return ok(make_engine().history_move(moves))
+
     @app.get('/api/briefs')
     @require_user
     def list_briefs():

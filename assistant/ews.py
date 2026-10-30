@@ -431,6 +431,45 @@ class EwsClient:
                     raise EwsError(safe_code(code))
         return out
 
+    def find_in_range(self, folder_ref, start, end, offset=0, limit=50, with_preview=True):
+        """Mails d'un dossier recus dans [start, end[ (UTC), du plus recent au plus ancien.
+
+        Renvoie (items, total, includes_last). L'apercu (item:Preview) est demande si possible.
+        """
+        fields = ['item:Subject', 'item:DateTimeReceived', 'item:HasAttachments', 'item:ItemClass',
+                  'item:ConversationId', 'message:From', 'message:InternetMessageId']
+        if with_preview:
+            fields.append('item:Preview')
+        iso = lambda d: d.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        body = (
+            '<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape>'
+            '<t:AdditionalProperties>' + fields_xml(fields) + '</t:AdditionalProperties></m:ItemShape>'
+            f'<m:IndexedPageItemView MaxEntriesReturned="{int(limit)}" Offset="{int(offset)}" BasePoint="Beginning"/>'
+            '<m:Restriction><t:And>'
+            '<t:IsGreaterThanOrEqualTo><t:FieldURI FieldURI="item:DateTimeReceived"/><t:FieldURIOrConstant>'
+            f'<t:Constant Value="{iso(start)}"/></t:FieldURIOrConstant></t:IsGreaterThanOrEqualTo>'
+            '<t:IsLessThan><t:FieldURI FieldURI="item:DateTimeReceived"/><t:FieldURIOrConstant>'
+            f'<t:Constant Value="{iso(end)}"/></t:FieldURIOrConstant></t:IsLessThan>'
+            '</t:And></m:Restriction><m:SortOrder><t:FieldOrder Order="Descending">'
+            '<t:FieldURI FieldURI="item:DateTimeReceived"/></t:FieldOrder></m:SortOrder>'
+            '<m:ParentFolderIds>' + folder_ref_xml(folder_ref) + '</m:ParentFolderIds></m:FindItem>')
+        try:
+            msg = self.check(self.post('FindItem', body)[0])
+        except EwsError as exc:
+            if with_preview and exc.code in ('ErrorInvalidPropertyRequest', 'ErrorSchemaValidation',
+                                             'ErrorInvalidRequest', 'ErrorInvalidServerVersion'):
+                return self.find_in_range(folder_ref, start, end, offset, limit, with_preview=False)
+            raise
+        root = msg.find('m:RootFolder', NS)
+        total = int(root.get('TotalItemsInView') or 0) if root is not None else 0
+        last = root is None or root.get('IncludesLastItemInRange') != 'false'
+        items = []
+        for node in iter_items(msg.find('.//t:Items', NS)):
+            item = parse_item(node)
+            item['preview'] = (text(node, 't:Preview') or '')[:300]
+            items.append(item)
+        return items, total, last
+
     def find_recent(self, folder_ref, limit=20):
         msg = self.check(self.post('FindItem', (
             '<m:FindItem Traversal="Shallow"><m:ItemShape><t:BaseShape>IdOnly</t:BaseShape>'

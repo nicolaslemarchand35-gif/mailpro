@@ -53,6 +53,17 @@ def build():
     for subject, sender, body, hours in SAMPLES:
         headers = {'list-unsubscribe': '<mailto:x>'} if 'newsletter' in sender else {}
         box.add(subject=subject, sender=sender, body=body, received=NOW - timedelta(hours=hours), headers=headers)
+    # Anciens mails (pour l'outil « Ranger les anciens mails »).
+    old = NOW - timedelta(days=60)
+    for n, (subject, sender, body) in enumerate([
+        ('Plan masse Résidence Les Tilleuls - indice B', 'moe@archi-durand.fr', 'Veuillez trouver le plan masse indice B pour les Tilleuls.'),
+        ('Votre facture Orange Pro de août', 'facture@orange.fr', 'Votre facture est disponible dans votre espace client.'),
+        ('Webinaire : la RE2020 en pratique', 'events@batiweb.com', 'Inscrivez-vous à notre prochain webinaire. Se désabonner.'),
+        ('Note de calcul fondations - Ecole Jules Ferry', 'c.bernard@bet-structure.fr', 'Ci-joint la note de calcul des fondations, pour information.'),
+        ('Information : fermeture du dépôt le 15 août', 'agence@pointp.fr', 'Notre dépôt sera fermé le 15 août.'),
+    ]):
+        box.add(subject=subject, sender=sender, body=body, received=old - timedelta(days=n),
+                headers={'list-unsubscribe': '<x>'} if 'batiweb' in sender else {})
     store = user_store()
     store.set('projects', 'ptilleuls', {'name': 'Résidence Les Tilleuls', 'keywords': ['tilleuls'],
                                         'contacts': ['@plomberie-martin.fr'], 'folder_id': 'TILLEULS', 'auto_move': False})

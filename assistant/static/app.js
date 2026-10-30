@@ -587,6 +587,90 @@ async function renderBrief() {
   daySel.addEventListener('change', async () => show((await api(`/api/briefs/${daySel.value}`)).brief));
 }
 
+// ---------------------------------------------------------------- rangement de l'historique
+function historyTool() {
+  const iso = (d) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const today = new Date();
+  const start = h('input', { type: 'date', value: iso(new Date(today.getTime() - 37 * 864e5)), 'aria-label': 'Du' });
+  const end = h('input', { type: 'date', value: iso(new Date(today.getTime() - 7 * 864e5)), 'aria-label': 'Au' });
+  const source = h('select', { 'aria-label': 'Dossier source' }, h('option', { value: 'inbox' }, 'Boîte de réception'),
+    ...state.folders.filter((f) => !f.system && !f.is_inbox).map((f) => h('option', { value: f.id }, f.path)));
+  const useAi = h('input', { type: 'checkbox', class: 'switch', checked: true });
+  const results = h('div', {});
+  let offset = 0;
+  let current = [];
+
+  const destSelect = (item) => {
+    const sel = h('select', { 'aria-label': 'Destination' },
+      h('option', { value: '' }, 'Laisser en place'),
+      h('option', { value: 'deleteditems' }, 'Corbeille (Éléments supprimés)'),
+      ...(item.target === 'info' ? [h('option', { value: 'info' }, 'Infos (créé au besoin)')] : []),
+      ...state.folders.filter((f) => !f.system && !f.is_inbox).map((f) => h('option', { value: f.id }, f.path)));
+    sel.value = item.target || '';
+    return sel;
+  };
+  const reasonLabel = { projet: 'projet reconnu', ia: 'proposé par l’IA', info: 'information', inutile: 'sans intérêt', garder: 'à garder / doute' };
+
+  const scan = async (btn) => {
+    if (!start.value || !end.value) return toast('Choisissez une plage de dates.', true);
+    results.replaceChildren(h('p', { class: 'muted' }, 'Analyse en cours… (jusqu’à une minute avec l’IA)'));
+    const r = await run(btn, () => api('/api/history/scan', { method: 'POST', body: {
+      start: start.value, end: end.value, folder: source.value, offset, use_ai: useAi.checked } }));
+    if (!r) { results.replaceChildren(); return; }
+    current = r.items;
+    if (!r.items.length) {
+      results.replaceChildren(h('div', { class: 'empty' }, offset ? 'Plus aucun mail dans cette plage.' : 'Aucun mail dans cette plage de dates.'));
+      return;
+    }
+    const rows = r.items.map((item) => {
+      const box = h('input', { type: 'checkbox', checked: item.preselect, 'aria-label': 'Sélectionner' });
+      const sel = destSelect(item);
+      sel.addEventListener('change', () => { box.checked = !!sel.value; });
+      item._box = box; item._sel = sel;
+      return h('tr', {},
+        h('td', {}, box),
+        h('td', { class: 'nowrap' }, fmtDate(item.received_at, false)),
+        h('td', {}, h('div', { class: 'strong' }, item.subject || '(sans objet)'),
+          h('div', { class: 'meta' }, item.from || ''), item.preview ? h('div', { class: 'meta hide-sm' }, item.preview.slice(0, 140)) : null),
+        h('td', {}, sel, h('div', { class: item.target && !item.preselect ? 'meta error' : 'meta' },
+          item.target && !item.preselect ? 'corbeille proposée par l’IA : à cocher si vous confirmez' : (reasonLabel[item.reason] || ''))));
+    });
+    const moveBtn = h('button', { class: 'primary', onclick: async (e) => {
+      const moves = current.filter((i) => i._box.checked && i._sel.value)
+        .map((i) => ({ ews_id: i.ews_id, target: i._sel.value, subject: i.subject }));
+      if (!moves.length) return toast('Aucun mail sélectionné avec une destination.', true);
+      if (!confirm(`Ranger ${moves.length} mail(s) ? Chaque déplacement est annulable dans le journal.`)) return;
+      const res = await run(e.currentTarget, () => api('/api/history/move', { method: 'POST', body: { folder: source.value, moves } }));
+      if (res) {
+        toast(`${res.moved} mail(s) rangé(s)${res.failed ? `, ${res.failed} en échec (${res.errors.join(', ')})` : ''}`, !!res.failed);
+        await loadFolders();
+        scan(null);
+      }
+    } }, 'Ranger la sélection');
+    const next = h('button', { class: 'tinted', onclick: (e) => { offset += current.length; scan(e.currentTarget); } }, 'Mails suivants');
+    const shown = `${offset + 1}–${offset + r.items.length} sur ${r.total}`;
+    results.replaceChildren(
+      h('p', { class: 'meta' }, `Mails ${shown} restant dans la plage`, r.ai_model ? ` · IA : ${r.ai_model}` : '',
+        r.ai_error ? h('span', { class: 'error' }, ` · IA indisponible (${r.ai_error}) : propositions par règles seulement`) : null),
+      h('div', { class: 'table-wrap' }, h('table', { class: 'history' },
+        h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Date'), h('th', {}, 'Mail'), h('th', {}, 'Destination'))),
+        h('tbody', {}, ...rows))),
+      h('div', { class: 'actions spread' }, moveBtn, r.has_more ? next : h('span')));
+  };
+
+  const go = h('button', { class: 'primary', onclick: (e) => { offset = 0; scan(e.currentTarget); } }, 'Analyser');
+  return h('section', { class: 'group section' }, h('h3', { class: 'group-title' }, 'Ranger les anciens mails'),
+    h('p', { class: 'group-header-note' }, 'Choisissez une plage de dates, vérifiez les destinations proposées, puis rangez. Procédez par petites plages (une à quatre semaines) : 50 mails sont analysés à la fois.'),
+    h('div', { class: 'group-body' },
+      h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Du'), start),
+      h('div', { class: 'field' }, h('span', { class: 'field-label' }, 'Au (inclus)'), end),
+      h('label', { class: 'field' }, h('span', { class: 'field-label' }, 'Dossier à ranger'), source),
+      h('label', { class: 'field toggle' }, h('span', { class: 'field-label' }, 'Utiliser l’IA',
+        h('small', {}, 'Un appel pour 25 mails ; sinon seuls les projets (mots-clés, interlocuteurs) sont reconnus')), useAi)),
+    h('div', { class: 'actions' }, go),
+    results);
+}
+
 // ---------------------------------------------------------------- classement
 async function renderClassement() {
   const main = $('#main');
@@ -635,7 +719,7 @@ async function renderClassement() {
       await run(e.currentTarget, () => api(`/api/audit/${a.id}/undo`, { method: 'POST' }), 'Déplacement annulé');
       render();
     } }, 'Annuler') : null)));
-  main.append(list,
+  main.append(list, historyTool(),
     h('div', { class: 'section' }, h('h3', {}, 'Arborescence de la boîte'), tree,
       h('div', { class: 'row', style: 'margin-top:.6rem' }, parentSel, nameInput,
         h('button', { onclick: async (e) => {

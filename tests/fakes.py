@@ -119,6 +119,15 @@ class FakeClient:
         fid = self.box.resolve(folder_ref)
         return [dict(i) for i in self.box.items.values() if i['folder_id'] == fid and i.get('correlation') == correlation]
 
+    def find_in_range(self, folder_ref, start, end, offset=0, limit=50, with_preview=True):
+        self._hit('find_in_range')
+        fid = self.box.resolve(folder_ref)
+        rows = sorted((i for i in self.box.items.values()
+                       if i['folder_id'] == fid and start <= i['received_at'] < end),
+                      key=lambda i: i['received_at'], reverse=True)
+        page = [dict(i, preview=(i['body'] or '')[:100]) for i in rows[offset:offset + limit]]
+        return page, len(rows), offset + len(page) >= len(rows)
+
     def find_recent(self, folder_ref, limit=20):
         self._hit('find_recent')
         fid = self.box.resolve(folder_ref)

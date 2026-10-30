@@ -10,6 +10,7 @@ Fiabilite :
 """
 import re
 import uuid
+from zoneinfo import ZoneInfo
 from datetime import datetime, timedelta, timezone
 import time
 
@@ -711,6 +712,21 @@ class Engine:
         entry = self.store.get('audit', audit_id)
         if not entry or entry.get('op') != 'deplacement' or entry.get('result') != 'ok':
             raise UserError('Déplacement non annulable.')
+        if not entry.get('message_id'):
+            if not entry.get('ews_id_new') or not entry.get('from_folder_id'):
+                raise UserError('Déplacement non annulable.')
+            try:
+                self.client().move_item(entry['ews_id_new'], entry['from_folder_id'])
+            except EwsError as exc:
+                if exc.code == 'ErrorItemNotFound':
+                    raise UserError("Le mail n'est plus à l'emplacement où l'assistant l'avait rangé.")
+                raise
+            finally:
+                self.close()
+            self.store.set('audit', audit_id, {'result': 'annule', 'undone_at': self.now()}, merge=True)
+            self.audit('annulation', message_id=None, subject=entry.get('subject'),
+                       from_path=entry.get('to_path'), to_path=entry.get('from_path'), result='ok', by='user')
+            return
         msg = self.store.get('messages', entry['message_id'])
         if not msg or msg.get('folder_id') != entry['to_folder_id']:
             raise UserError("Le mail n'est plus à l'emplacement où l'assistant l'avait rangé.")
@@ -924,6 +940,118 @@ class Engine:
         finally:
             self.close()
         return {'moved': moved, 'failed': failed}
+
+    # -- rangement de l'historique ---------------------------------------------------
+    def history_scan(self, folder_ref, start_day, end_day, offset=0, use_ai=True, limit=50):
+        """Liste les mails d'une plage de dates et propose une destination pour chacun."""
+        cfg = self.settings()
+        tz = ZoneInfo(cfg['timezone'])
+        start = datetime.combine(start_day, datetime.min.time(), tz)
+        end = datetime.combine(end_day + timedelta(days=1), datetime.min.time(), tz)
+        try:
+            meta = self.refresh_folders()
+            items, total, last = self.client().find_in_range(folder_ref, start, end, offset, limit)
+            ctx = self.base_context(cfg, meta)
+            projects = ctx['projects']
+            ai_props, model, ai_error = {}, None, None
+            if use_ai and cfg['ai_enabled'] and ai.ai_configured() and items:
+                for n in range(0, len(items), 25):
+                    if self.ai_budget_left(cfg) <= 0:
+                        ai_error = 'QuotaJournalier'
+                        break
+                    try:
+                        found, model = ai.classify_history(items[n:n + 25], ctx)
+                        self.count_ai_call(cfg)
+                        ai_props.update(found)
+                    except ai.AiQuotaError as exc:
+                        self.count_ai_call(cfg, quota_error=True)
+                        ai_error = exc.code
+                        break
+                    except ai.AiError as exc:
+                        self.count_ai_call(cfg)
+                        ai_error = exc.code
+            info_folder = self.special_folder('info_folder', cfg, create=False)
+        finally:
+            self.close()
+        project_folders = dict((pid, p.get('folder_id')) for pid, p in projects)
+        out = []
+        for item in items:
+            # Les regles (mots-cles / interlocuteurs valides) passent avant l'IA.
+            rule_pid, score = ai.match_project({'from': item.get('from'), 'subject': item.get('subject')},
+                                               projects, item.get('preview'))
+            prop = ai_props.get(item['id']) or {}
+            target, reason = None, 'garder'
+            if rule_pid and score >= 2 and self.known_folder(project_folders.get(rule_pid), meta):
+                target, reason = project_folders[rule_pid], 'projet'
+            elif prop.get('type') == 'dossier':
+                target, reason = ctx['folder_map'].get(prop['dossier_id']), 'ia'
+            elif prop.get('type') == 'info':
+                target, reason = info_folder or 'info', 'info'
+            elif prop.get('type') == 'inutile' or ai.is_bulk(item):
+                target, reason = 'deleteditems', 'inutile'
+            sender = item.get('from') or {}
+            out.append({
+                'ews_id': item['id'], 'subject': item.get('subject'), 'from': sender.get('name') or sender.get('email'),
+                'from_email': sender.get('email'), 'received_at': item.get('received_at'),
+                'preview': item.get('preview'), 'has_attachments': item.get('has_attachments'),
+                'target': target, 'reason': reason,
+                # Corbeille proposee par l'IA (et non une newsletter detectee) : a confirmer par l'utilisateur.
+                'preselect': bool(target) and not (target == 'deleteditems' and not ai.is_bulk(item)),
+            })
+        return {'items': out, 'total': total, 'offset': offset, 'has_more': not last,
+                'ai_model': model, 'ai_error': ai_error}
+
+    def history_move(self, moves):
+        """Range une selection de mails anciens. Chaque deplacement est journalise et annulable."""
+        cfg = self.settings()
+        results = {'moved': 0, 'failed': 0, 'errors': []}
+        try:
+            meta = self.folders_meta()
+            dist = meta.get('distinguished') or {}
+            for move in moves[:100]:
+                ews_id, target = move.get('ews_id'), move.get('target')
+                if not isinstance(ews_id, str) or not isinstance(target, str):
+                    results['failed'] += 1
+                    continue
+                if target == 'info':
+                    target = self.special_folder('info_folder', cfg)
+                    meta = self.folders_meta()
+                # Mail deja suivi par l'application : on passe par le circuit normal.
+                known = self.store.query('messages', 'ews_id', '==', ews_id, limit=1)
+                try:
+                    if known:
+                        self.move_message(known[0][0], target, by='historique',
+                                          allow_trash=target == 'deleteditems')
+                    else:
+                        self.move_raw(ews_id, target, move.get('subject'), move.get('from_folder'), meta, dist)
+                    results['moved'] += 1
+                except (UserError, EwsError) as exc:
+                    results['failed'] += 1
+                    results['errors'].append(getattr(exc, 'code', None) or str(exc))
+        finally:
+            self.close()
+        results['errors'] = sorted(set(results['errors']))[:5]
+        return results
+
+    def move_raw(self, ews_id, target, subject, from_folder, meta, dist):
+        if target == 'deleteditems':
+            folder_id, path = dist.get('deleteditems') or 'deleteditems', 'Éléments supprimés'
+        else:
+            folder = next((f for f in meta.get('folders') or [] if f['id'] == target and not f.get('system')), None)
+            if not folder:
+                raise UserError('Dossier de destination invalide.')
+            folder_id, path = folder['id'], folder['path']
+        from_id = dist.get(from_folder, from_folder) if from_folder else None
+        audit_id = self.audit('deplacement', message_id=None, subject=(subject or '')[:300],
+                              from_folder_id=from_id, from_path=self.folder_path(from_id, meta) if from_id else None,
+                              to_folder_id=folder_id, to_path=path, result='en_cours', by='historique')
+        try:
+            new_id = self.client().move_item(ews_id, folder_id)
+        except EwsError as exc:
+            self.store.set('audit', audit_id, {'result': 'echec', 'error': exc.code}, merge=True)
+            raise
+        self.store.set('audit', audit_id, {'result': 'ok', 'ews_id_new': new_id}, merge=True)
+        return audit_id
 
     # -- brief quotidien -------------------------------------------------------------
     def maybe_brief(self, cfg, counters):

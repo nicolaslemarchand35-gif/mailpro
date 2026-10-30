@@ -27,6 +27,9 @@ class EngineTests(unittest.TestCase):
     def setUp(self):
         self.env = patch.dict(os.environ, {'OPENROUTER_API_KEY': 'k' * 40, 'OVH_EMAIL': 'moi@entreprise.fr'})
         self.env.start()
+        # Aucun appel reseau : la synthese IA du brief echoue par defaut (repli sans IA).
+        self.brief_ai = patch('assistant.ai.brief_synthesis', side_effect=ai.AiError('Offline'))
+        self.brief_ai.start()
         self.box = FakeMailbox()
         self.store = UserStore(MemoryStore(), 'u1')
         self.now = NOW
@@ -34,6 +37,7 @@ class EngineTests(unittest.TestCase):
         self.ai_result = fake_analysis()
 
     def tearDown(self):
+        self.brief_ai.stop()
         self.env.stop()
 
     def analyzer(self, item, ctx, timeout=20):
@@ -458,6 +462,45 @@ class EngineTests(unittest.TestCase):
         self.engine().tick()
         self.assertEqual(self.engine().move_all_proposals(), {'moved': 2, 'failed': 0})
         self.assertEqual({m['folder_id'] for m in self.messages().values()}, {'DUPONT'})
+
+    # -- rangement de l'historique -------------------------------------------------------
+    def test_history_scan_proposals_and_move(self):
+        self.store.set('projects', 'p1', {'name': 'Dupont', 'keywords': ['dupont'], 'contacts': [], 'folder_id': 'DUPONT'})
+        old = NOW - timedelta(days=200)
+        a = self.box.add(subject='Chantier Dupont : planning', received=old)
+        b = self.box.add(subject='Compte rendu AG', received=old + timedelta(hours=1))
+        c = self.box.add(subject='Promo', received=old + timedelta(hours=2), headers={'list-unsubscribe': '<x>'})
+        d = self.box.add(subject='Question en suspens', received=old + timedelta(hours=3))
+        self.box.add(subject='Hors plage', received=NOW - timedelta(days=1))
+        day = old.date()
+
+        def classify(items, ctx, timeout=30):
+            return {b: {'type': 'info', 'dossier_id': None}, d: {'type': 'garder', 'dossier_id': None}}, 'm'
+        with patch('assistant.ai.classify_history', side_effect=classify):
+            out = self.engine().history_scan('inbox', day, day)
+        props = {i['ews_id']: (i['target'], i['reason']) for i in out['items']}
+        self.assertEqual(out['total'], 4)
+        self.assertEqual(props[a], ('DUPONT', 'projet'))
+        self.assertEqual(props[b], ('info', 'info'))
+        self.assertEqual(props[c], ('deleteditems', 'inutile'))
+        self.assertEqual(props[d], (None, 'garder'))
+        self.assertTrue(all(i['preselect'] for i in out['items'] if i['target']))  # newsletter detectee : precochee
+        res = self.engine().history_move([{'ews_id': a, 'target': 'DUPONT', 'subject': 's', 'from_folder': 'inbox'},
+                                           {'ews_id': b, 'target': 'info', 'from_folder': 'inbox'},
+                                           {'ews_id': c, 'target': 'deleteditems', 'from_folder': 'inbox'}])
+        self.assertEqual((res['moved'], res['failed']), (3, 0))
+        folders = sorted(self.box.folders[i['folder_id']]['name'] for i in self.box.items.values() if i['received_at'] < NOW - timedelta(days=100))
+        self.assertEqual(folders, ['Dupont', 'Inbox', 'Infos', 'Éléments supprimés'])
+        audit_id = next(i for i, e in self.store.query('audit') if e.get('to_folder_id') == 'DUPONT')
+        self.engine().undo_move(audit_id)
+        self.assertEqual(sum(1 for i in self.box.items.values() if i['folder_id'] == 'DUPONT'), 0)
+
+    def test_history_move_known_message_uses_normal_path(self):
+        item_id = self.box.add(received=NOW - timedelta(hours=1))
+        self.engine().tick()
+        res = self.engine().history_move([{'ews_id': item_id, 'target': 'DUPONT', 'from_folder': 'inbox'}])
+        self.assertEqual(res['moved'], 1)
+        self.assertEqual(self.first()[1]['folder_id'], 'DUPONT')  # fiche message mise a jour
 
     # -- brief ----------------------------------------------------------------------
     def info_result(self):
